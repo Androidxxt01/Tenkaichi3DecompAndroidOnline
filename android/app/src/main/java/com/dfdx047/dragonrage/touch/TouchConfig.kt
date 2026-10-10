@@ -51,27 +51,42 @@ enum class Ctl(
     val dy: Float = 0f,
     val shownByDefault: Boolean = true,
 ) {
-    DPAD(CtlKind.DPAD, 0, 128f, 0.10f, 0.40f),
-    STICK_L(CtlKind.STICK_L, 0, 150f, 0.19f, 0.74f),
-    STICK_R(CtlKind.STICK_R, 0, 110f, 0.68f, 0.78f),
-    CROSS(CtlKind.BUTTON, Ps2.CROSS, 66f, 0.86f, 0.64f, 0f, 62f),
-    CIRCLE(CtlKind.BUTTON, Ps2.CIRCLE, 66f, 0.86f, 0.64f, 62f, 0f),
-    SQUARE(CtlKind.BUTTON, Ps2.SQUARE, 66f, 0.86f, 0.64f, -62f, 0f),
-    TRIANGLE(CtlKind.BUTTON, Ps2.TRIANGLE, 66f, 0.86f, 0.64f, 0f, -62f),
-    L1(CtlKind.SHOULDER, Ps2.L1, 84f, 0.17f, 0.12f),
-    L2(CtlKind.SHOULDER, Ps2.L2, 84f, 0.07f, 0.12f),
-    R1(CtlKind.SHOULDER, Ps2.R1, 84f, 0.83f, 0.12f),
-    R2(CtlKind.SHOULDER, Ps2.R2, 84f, 0.93f, 0.12f),
+    // Battle mode uses a virtual stick. Menu mode swaps to this D-pad because BT3's menus read digital directions.
+    DPAD(CtlKind.DPAD, 0, 128f, 0.10f, 0.43f),
+    STICK_L(CtlKind.STICK_L, 0, 148f, 0.145f, 0.775f),
+    STICK_R(CtlKind.STICK_R, 0, 100f, 0.70f, 0.78f, shownByDefault = false),
+
+    // Combat controls form a mobile thumb cluster rather than the classic PS2 diamond.
+    // The tiny controller symbol is only a reference; the illustrated action is the primary affordance.
+    SQUARE(CtlKind.BUTTON, Ps2.SQUARE, 82f, 0.845f, 0.805f),       // melee attack
+    CIRCLE(CtlKind.BUTTON, Ps2.CIRCLE, 66f, 0.745f, 0.735f),      // guard
+    TRIANGLE(CtlKind.BUTTON, Ps2.TRIANGLE, 66f, 0.855f, 0.605f),  // Ki blast
+    CROSS(CtlKind.BUTTON, Ps2.CROSS, 60f, 0.945f, 0.735f),        // dash
+
+    // One-touch versions of common simultaneous-input attacks. They still send the exact native PS2 bits.
+    BLAST1(CtlKind.BUTTON, Ps2.L2 or Ps2.CIRCLE, 52f, 0.745f, 0.555f),
+    BLAST2(CtlKind.BUTTON, Ps2.L2 or Ps2.TRIANGLE, 52f, 0.945f, 0.555f),
+    ULTIMATE(CtlKind.BUTTON, Ps2.L2 or Ps2.DOWN or Ps2.TRIANGLE, 52f, 0.955f, 0.905f),
+
+    // Utility actions stay near their screen edge and outside the primary thumb cluster.
+    L1(CtlKind.SHOULDER, Ps2.L1, 78f, 0.075f, 0.155f),          // lock-on
+    L2(CtlKind.SHOULDER, Ps2.L2, 78f, 0.075f, 0.275f),          // Ki charge (hold)
+    R1(CtlKind.SHOULDER, Ps2.R1, 78f, 0.875f, 0.155f),          // jump / ascend
+    R2(CtlKind.SHOULDER, Ps2.R2, 78f, 0.875f, 0.275f),          // descend
     L3(CtlKind.BUTTON, Ps2.L3, 50f, 0.31f, 0.58f),
-    R3(CtlKind.BUTTON, Ps2.R3, 50f, 0.58f, 0.70f),
-    SELECT(CtlKind.PILL, Ps2.SELECT, 70f, 0.42f, 0.92f),
-    START(CtlKind.PILL, Ps2.START, 70f, 0.58f, 0.92f),
-    MENU(CtlKind.SYSTEM, 0, 40f, 0.47f, 0.07f),    // the game's pause / settings window (the back key)
-    OPTIONS(CtlKind.SYSTEM, 0, 40f, 0.53f, 0.07f), // this controller's own quick menu
+    R3(CtlKind.BUTTON, Ps2.R3, 48f, 0.965f, 0.415f),             // transform / free look
+    // Battle-only roster actions. The native game decides the actual team size at runtime.
+    TEAM_SWAP(CtlKind.SYSTEM, 0, 54f, 0.22f, 0.325f),            // sends L3 + R3 together
+    TEAM_SELECT(CtlKind.SYSTEM, 0, 48f, 0.22f, 0.435f),          // one right-stick-down input advances the roster target
+    SELECT(CtlKind.PILL, Ps2.SELECT, 50f, 0.355f, 0.065f, shownByDefault = false),
+    START(CtlKind.PILL, Ps2.START, 50f, 0.645f, 0.065f),
+    MENU(CtlKind.SYSTEM, 0, 40f, 0.465f, 0.065f),                // port pause / settings window
+    OPTIONS(CtlKind.SYSTEM, 0, 40f, 0.535f, 0.065f),             // controller quick menu
+    NAV_MODE(CtlKind.SYSTEM, 0, 42f, 0.50f, 0.155f),              // manually swap combat controls <-> menu D-pad
 }
 
 /** Where a control is: centre as a fraction of the screen, its scale, shown or not. */
-data class Placement(val x: Float, val y: Float, val scale: Float = 1f, val visible: Boolean = true)
+data class Placement(val x: Float, val y: Float, val scale: Float = 1f, val visible: Boolean = true, val opacity: Int = 100)
 
 /** One step of a macro: these buttons held for [ms] milliseconds (0 buttons: a pause). */
 data class MacroStep(val buttons: Int, val ms: Int)
@@ -101,7 +116,7 @@ data class TouchConfig(
     fun placeOf(c: Ctl): Placement? = places[c]
 
     fun toJson(): JSONObject = JSONObject().apply {
-        put("version", 1)
+        put("version", 2)
         put("mode", mode.name)
         put("skin", skin.name)
         put("opacity", opacity)
@@ -125,10 +140,14 @@ data class TouchConfig(
     companion object {
         fun fromJson(o: JSONObject): TouchConfig {
             val places = mutableMapOf<Ctl, Placement>()
-            o.optJSONObject("places")?.let { p ->
-                p.keys().forEach { k ->
-                    val c = Ctl.entries.firstOrNull { it.name == k } ?: return@forEach
-                    p.optJSONObject(k)?.let { places[c] = placement(it) }
+            // Version 2 introduces the BT3-specific mobile layout. Old v1 absolute placements describe the
+            // generic controller and would override the new ergonomic defaults, so migrate those once.
+            if (o.optInt("version", 1) >= 2) {
+                o.optJSONObject("places")?.let { p ->
+                    p.keys().forEach { k ->
+                        val c = Ctl.entries.firstOrNull { it.name == k } ?: return@forEach
+                        p.optJSONObject(k)?.let { places[c] = placement(it) }
+                    }
                 }
             }
             val macros = mutableListOf<Macro>()
@@ -163,13 +182,14 @@ data class TouchConfig(
             )
         }
 
-        private fun Placement.json() = JSONObject().put("x", x.toDouble()).put("y", y.toDouble()).put("s", scale.toDouble()).put("v", visible)
+        private fun Placement.json() = JSONObject().put("x", x.toDouble()).put("y", y.toDouble()).put("s", scale.toDouble()).put("v", visible).put("o", opacity)
 
         private fun placement(o: JSONObject) = Placement(
             o.optDouble("x", 0.5).toFloat().coerceIn(0f, 1f),
             o.optDouble("y", 0.5).toFloat().coerceIn(0f, 1f),
             o.optDouble("s", 1.0).toFloat().coerceIn(0.4f, 2.5f),
             o.optBoolean("v", true),
+            o.optInt("o", 100).coerceIn(10, 100),
         )
     }
 }

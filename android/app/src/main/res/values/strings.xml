@@ -165,7 +165,7 @@
     <!-- on-screen controller -->
     <string name="nav_controls">Controls</string>
     <string name="controls_subtitle">The on-screen controller: when it shows, its look, its layout and macros</string>
-    <string name="touch_skin">Look</string>
+    <string name="touch_skin">Controller button symbols</string>
     <string name="skin_playstation">PlayStation</string>
     <string name="skin_xbox">Xbox</string>
     <string name="skin_nintendo">Nintendo</string>
@@ -175,7 +175,7 @@
     <string name="touch_float">Floating stick</string>
     <string name="touch_float_text">The left stick starts where your thumb lands, anywhere on the lower left</string>
     <string name="touch_edit_layout">Edit layout</string>
-    <string name="touch_edit_hint">Drag a control to move it. Tap it to select it: − and + resize it, Hide hides it, Reset puts it back. With nothing selected, − and + resize everything.</string>
+    <string name="touch_edit_hint">Drag a control to move it. Tap it to select it: − and + resize it, α− and α+ adjust opacity, Hide hides it, Reset restores defaults. With nothing selected, size and opacity apply to all controls.</string>
     <string name="touch_show">Show</string>
     <string name="touch_hide">Hide</string>
     <string name="touch_reset">Reset</string>

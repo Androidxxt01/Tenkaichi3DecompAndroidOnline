@@ -730,3 +730,121 @@ JNIEXPORT jboolean JNICALL Java_com_dfdx047_dragonrage_engine_TouchBridge_native
     }
     return fn != NULL && fn() ? JNI_TRUE : JNI_FALSE;
 }
+
+/* Read the player's actual side from BattleWork. In some battle setups the human side is side 1,
+   so assuming sides[0] hides the team controls even though the touch buttons exist in the editor.
+   BattleSide offsets are verified in include/battle/battle.h: sides at +0xC0, size 0x270,
+   memberCount at +0, control at +0x208. BattleWork.running is +0x19F8. */
+JNIEXPORT jint JNICALL Java_com_dfdx047_dragonrage_engine_TouchBridge_nativePlayerTeamSize(JNIEnv *env, jclass cls) {
+    typedef void *(*BattleGetWorkFn)(void);
+    typedef int32_t (*BattleGetHumanSideFn)(void);
+    typedef int32_t (*BattleSideGetMemberCountFn)(int32_t);
+    typedef int32_t (*BattleSideGetControlFn)(int32_t);
+    static BattleGetWorkFn get_work;
+    static BattleGetHumanSideFn get_human_side;
+    static BattleSideGetMemberCountFn get_member_count;
+    static BattleSideGetControlFn get_control;
+    static int accessors_resolved;
+    static uint32_t last_magic = UINT32_MAX;
+    static int32_t last_running = INT32_MIN;
+    static int32_t last_count0 = INT32_MIN, last_control0 = INT32_MIN;
+    static int32_t last_count1 = INT32_MIN, last_control1 = INT32_MIN;
+    static int32_t last_side = INT32_MIN, last_result = INT32_MIN;
+    uintptr_t work;
+    void *work_ptr;
+    uint32_t magic;
+    int32_t running, count0, control0, count1, control1;
+    int32_t result = 0, side = -1;
+    const char *source = "idle";
+    static int logged_engine_unavailable = 0;
+    (void)env;
+    (void)cls;
+    if (sEngine == NULL) {
+        if (!logged_engine_unavailable) {
+            __android_log_print(ANDROID_LOG_WARN, TAG, "touch roster: engine handle unavailable; team state unknown");
+            logged_engine_unavailable = 1;
+        }
+        return -1; /* unknown, not a single-character battle */
+    }
+    logged_engine_unavailable = 0;
+    if (!accessors_resolved) {
+        /* These are exported by libbt3.so (--export-dynamic); use the engine's own accessors first. */
+        get_work = (BattleGetWorkFn)dlsym(sEngine, "Battle_GetWork");
+        get_human_side = (BattleGetHumanSideFn)dlsym(sEngine, "Battle_GetHumanSide");
+        get_member_count = (BattleSideGetMemberCountFn)dlsym(sEngine, "BattleSide_GetMemberCount");
+        get_control = (BattleSideGetControlFn)dlsym(sEngine, "BattleSide_GetControl");
+        accessors_resolved = 1;
+        __android_log_print(ANDROID_LOG_INFO, TAG,
+            "touch roster: engine accessors work=%s humanSide=%s memberCount=%s control=%s",
+            get_work ? "yes" : "no", get_human_side ? "yes" : "no",
+            get_member_count ? "yes" : "no", get_control ? "yes" : "no");
+    }
+    work_ptr = get_work != NULL ? get_work() : (void *)(uintptr_t)((intptr_t)0x00331DC8 + sBias);
+    if (work_ptr == NULL) {
+        __android_log_print(ANDROID_LOG_WARN, TAG, "touch roster: Battle_GetWork returned null; team state unknown");
+        return -1;
+    }
+    work = (uintptr_t)work_ptr;
+    memcpy(&magic, (const void *)work, sizeof(magic));
+    memcpy(&running, (const void *)(work + 0x19F8), sizeof(running));
+    memcpy(&count0, (const void *)(work + 0x0C0), sizeof(count0));
+    memcpy(&control0, (const void *)(work + 0x2C8), sizeof(control0));
+    memcpy(&count1, (const void *)(work + 0x330), sizeof(count1));
+    memcpy(&control1, (const void *)(work + 0x538), sizeof(control1));
+
+    if (running != 1) {
+        result = 0; /* no active battle: don't show team controls in menus */
+        source = "idle";
+    } else if (magic != 0x736C7462u) {
+        result = -1; /* active battle but unexpected state layout: show controls and retain diagnostics */
+        source = "unknown-magic";
+    } else {
+        if (get_human_side != NULL) {
+            side = get_human_side();
+        }
+        if (side >= 0 && side <= 1 && get_member_count != NULL) {
+            int32_t count = get_member_count(side);
+            int32_t control = get_control != NULL ? get_control(side) : (side == 0 ? control0 : control1);
+            if (control == 0 && count >= 1 && count <= 5) {
+                result = count;
+                source = "engine-accessor";
+            }
+        }
+        /* Fall back to the verified BattleWork layout if a symbol is unavailable or reports an invalid count. */
+        if (result < 1 || result > 5) {
+            if (control0 == 0 && count0 >= 1 && count0 <= 5) {
+                result = count0;
+                side = 0;
+                source = "memory-side0";
+            } else if (control1 == 0 && count1 >= 1 && count1 <= 5) {
+                result = count1;
+                side = 1;
+                source = "memory-side1";
+            } else if (count0 >= 1 && count0 <= 5 && count1 >= 1 && count1 <= 5) {
+                /* Fallback only if the side-control accessor cannot identify the human side. */
+                result = count0 > count1 ? count0 : count1;
+                source = "memory-max-fallback";
+            } else {
+                result = -1;
+                source = "active-unknown";
+            }
+        }
+    }
+
+    /* Emit a compact event when battle state changes; the Java overlay also logs the sampled result. */
+    if (magic != last_magic || running != last_running || count0 != last_count0 || control0 != last_control0 ||
+        count1 != last_count1 || control1 != last_control1 || side != last_side || result != last_result) {
+        __android_log_print(ANDROID_LOG_INFO, TAG,
+            "touch roster: source=%s magic=%08x running=%d side0(control=%d,count=%d) side1(control=%d,count=%d) humanSide=%d playerTeam=%d bias=%+ld",
+            source, magic, running, control0, count0, control1, count1, side, result, (long)sBias);
+        last_magic = magic;
+        last_running = running;
+        last_count0 = count0;
+        last_control0 = control0;
+        last_count1 = count1;
+        last_control1 = control1;
+        last_side = side;
+        last_result = result;
+    }
+    return (jint)result;
+}

@@ -154,11 +154,8 @@ fun ControlsScreen(vm: AppViewModel) {
 private fun LayoutEditor(c: TouchConfig, onChange: (TouchConfig) -> Unit, onDone: () -> Unit) {
     Dialog(onDismissRequest = onDone, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color(0xFF0B1020))) {
-            Text(
-                stringResource(R.string.touch_edit_hint),
-                style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.6f),
-                modifier = Modifier.align(Alignment.Center).padding(32.dp),
-            )
+            // Keep the preview itself unobstructed. Help and tool labels are drawn inside TouchPadView's
+            // compact top toolbar instead of as a transparent Compose layer over the controls.
             AndroidView(
                 factory = { ctx ->
                     TouchPadView(ctx, c.copy(mode = TouchMode.ALWAYS), editing = true).apply {
@@ -169,6 +166,7 @@ private fun LayoutEditor(c: TouchConfig, onChange: (TouchConfig) -> Unit, onDone
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
+                update = { view -> view.config = c.copy(mode = TouchMode.ALWAYS) },
             )
         }
     }

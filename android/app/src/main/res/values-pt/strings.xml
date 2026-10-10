@@ -164,7 +164,7 @@
     <!-- controle na tela -->
     <string name="nav_controls">Controles</string>
     <string name="controls_subtitle">O controle na tela: quando aparece, o visual, o layout e as macros</string>
-    <string name="touch_skin">Visual</string>
+    <string name="touch_skin">Símbolos do controle</string>
     <string name="skin_playstation">PlayStation</string>
     <string name="skin_xbox">Xbox</string>
     <string name="skin_nintendo">Nintendo</string>
@@ -174,7 +174,7 @@
     <string name="touch_float">Analógico flutuante</string>
     <string name="touch_float_text">O analógico esquerdo começa onde o polegar toca, em qualquer ponto do canto inferior esquerdo</string>
     <string name="touch_edit_layout">Editar layout</string>
-    <string name="touch_edit_hint">Arraste um controle para movê-lo. Toque nele para selecionar: − e + mudam o tamanho, Ocultar esconde, Resetar volta ao padrão. Sem nada selecionado, − e + mudam o tamanho de tudo.</string>
+    <string name="touch_edit_hint">Arraste um controle para movê-lo. Toque nele para selecionar: − e + mudam o tamanho, α− e α+ ajustam a opacidade, Ocultar esconde e Resetar restaura o padrão. Sem nada selecionado, tamanho e opacidade se aplicam a todos os controles.</string>
     <string name="touch_show">Mostrar</string>
     <string name="touch_hide">Ocultar</string>
     <string name="touch_reset">Resetar</string>

@@ -11,10 +11,15 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.util.DisplayMetrics
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
+import android.view.WindowManager
 import com.dfdx047.dragonrage.R
+import com.dfdx047.dragonrage.engine.TouchBridge
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -49,9 +54,19 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
 
     var editing: Boolean = editing
         set(v) {
+            if (field == v) return
             field = v
             selected = null
             releaseAll()
+            if (v) {
+                Log.i("bt3", "touch roster: polling paused while layout editor is open")
+                handler.removeCallbacks(teamSizePoll)
+            } else if (isAttachedToWindow) {
+                // Entering edit mode pauses native queries. Explicitly restart them on return to gameplay.
+                Log.i("bt3", "touch roster: polling resumed after layout editor")
+                handler.removeCallbacks(teamSizePoll)
+                handler.post(teamSizePoll)
+            }
             rebuild()
         }
 
@@ -88,6 +103,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         var h: Float,
         var scale: Float,
         var visible: Boolean,
+        var opacity: Int = 100,
     ) {
         val round: Boolean get() = kind == CtlKind.BUTTON || kind == CtlKind.STICK_L || kind == CtlKind.STICK_R || kind == CtlKind.SYSTEM || kind == CtlKind.MACRO
         fun hit(x: Float, y: Float, slack: Float): Boolean =
@@ -98,6 +114,69 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     private val dp = resources.displayMetrics.density
     private val els = mutableListOf<El>()
 
+    // The editor and runtime overlay can span the physical display, including a camera cutout. Keep a local
+    // safe rectangle in this View's coordinates; saved placements are normalized inside this rectangle, not
+    // across the cutout / letterboxed area. This also works when Android has already inset the Dialog window.
+    private var safeInsetLeftPx = 0f
+    private var safeInsetTopPx = 0f
+    private var safeInsetRightPx = 0f
+    private var safeInsetBottomPx = 0f
+    private var hasReceivedInsets = false
+
+    private val safeWidth: Float
+        get() = (width - safeInsetLeftPx - safeInsetRightPx).coerceAtLeast(1f)
+    private val safeHeight: Float
+        get() = (height - safeInsetTopPx - safeInsetBottomPx).coerceAtLeast(1f)
+
+    private fun updateSafeInsets(insets: WindowInsets? = rootWindowInsets) {
+        if (insets == null) {
+            if (!hasReceivedInsets) {
+                safeInsetLeftPx = 0f; safeInsetTopPx = 0f
+                safeInsetRightPx = 0f; safeInsetBottomPx = 0f
+            }
+            return
+        }
+        hasReceivedInsets = true
+        val cutout = insets.displayCutout
+        val oldLeft = safeInsetLeftPx
+        val oldTop = safeInsetTopPx
+        val oldRight = safeInsetRightPx
+        val oldBottom = safeInsetBottomPx
+        if (cutout == null || width <= 0 || height <= 0) {
+            safeInsetLeftPx = 0f; safeInsetTopPx = 0f
+            safeInsetRightPx = 0f; safeInsetBottomPx = 0f
+        } else {
+            val location = IntArray(2)
+            getLocationOnScreen(location)
+            val real = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(real)
+            // Convert display-edge safe insets to this View's local coordinates. If Android already placed
+            // the dialog inside the safe area, these values naturally resolve to zero instead of double-shifting.
+            safeInsetLeftPx = (cutout.safeInsetLeft - location[0]).toFloat().coerceIn(0f, width.toFloat())
+            safeInsetTopPx = (cutout.safeInsetTop - location[1]).toFloat().coerceIn(0f, height.toFloat())
+            safeInsetRightPx = (location[0] + width - (real.widthPixels - cutout.safeInsetRight)).toFloat()
+                .coerceIn(0f, width.toFloat())
+            safeInsetBottomPx = (location[1] + height - (real.heightPixels - cutout.safeInsetBottom)).toFloat()
+                .coerceIn(0f, height.toFloat())
+        }
+        if (abs(oldLeft - safeInsetLeftPx) >= 1f || abs(oldTop - safeInsetTopPx) >= 1f ||
+            abs(oldRight - safeInsetRightPx) >= 1f || abs(oldBottom - safeInsetBottomPx) >= 1f) {
+            Log.i("bt3", "touch safe-area: view=${width}x${height} insets=${safeInsetLeftPx.toInt()},${safeInsetTopPx.toInt()},${safeInsetRightPx.toInt()},${safeInsetBottomPx.toInt()}")
+        }
+    }
+
+    override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
+        val applied = super.onApplyWindowInsets(insets)
+        updateSafeInsets(insets)
+        rebuild()
+        return applied
+    }
+
+    /** BT3 has menu screens driven by digital directions. The port doesn't expose a reliable game/menu state,
+     * so the player can switch layouts explicitly without a controller. */
+    private var navigationMode = false
+
     private fun baseSize(kind: CtlKind, size: Float): Pair<Float, Float> = when (kind) {
         CtlKind.SHOULDER -> size to size * 0.52f
         CtlKind.PILL -> size to size * 0.44f
@@ -105,24 +184,51 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     }
 
     private fun rebuild() {
+        updateSafeInsets()
+        val selectedKey = selected?.key
         els.clear()
         val w = width.toFloat()
         val h = height.toFloat()
+        val left = safeInsetLeftPx
+        val top = safeInsetTopPx
+        val right = w - safeInsetRightPx
+        val bottom = h - safeInsetBottomPx
+        val vw = safeWidth
+        val vh = safeHeight
         if (w <= 0f || h <= 0f) return
         val all = config.scale
         for (c in Ctl.entries) {
             val p = config.placeOf(c)
             val s = p?.scale ?: 1f
             val (bw, bh) = baseSize(c.kind, c.size)
-            val cx = p?.x?.times(w) ?: (c.x * w + c.dx * dp * all)
-            val cy = p?.y?.times(h) ?: (c.y * h + c.dy * dp * all)
-            els += El(c.name, c, null, c.kind, cx, cy, bw * dp * all * s, bh * dp * all * s, s, p?.visible ?: c.shownByDefault)
+            val rawX = if (p != null) left + p.x * vw else left + c.x * vw + c.dx * dp * all
+            val rawY = if (p != null) top + p.y * vh else top + c.y * vh + c.dy * dp * all
+            val requestedW = bw * dp * all * s
+            val requestedH = bh * dp * all * s
+            // Fit the complete artwork and hit area to the real usable viewport before clamping the centre.
+            val fit = min(1f, min(
+                (vw - 24f * dp).coerceAtLeast(1f) / requestedW,
+                (vh - 20f * dp).coerceAtLeast(1f) / requestedH,
+            ))
+            val ew = requestedW * fit
+            val eh = requestedH * fit
+            val marginX = max(ew / 2f + 12f * dp, vw * 0.04f).coerceAtMost(vw / 2f)
+            val marginY = max(eh / 2f + 10f * dp, vh * 0.035f).coerceAtMost(vh / 2f)
+            val cx = rawX.coerceIn(left + marginX, max(left + marginX, right - marginX))
+            val cy = rawY.coerceIn(top + marginY, max(top + marginY, bottom - marginY))
+            els += El(c.name, c, null, c.kind, cx, cy, ew, eh, s, p?.visible ?: c.shownByDefault, p?.opacity ?: 100)
         }
         config.macros.forEachIndexed { i, m ->
-            val size = 58f * dp * all * m.place.scale
+            val requestedSize = 58f * dp * all * m.place.scale
+            val size = requestedSize.coerceAtMost(min(vw - 24f * dp, vh - 20f * dp).coerceAtLeast(1f))
             val (px, py) = if (m.place == Placement(0.74f, 0.40f, 1f, true)) (0.74f - 0.07f * (i % 3)) to (0.38f - 0.13f * (i / 3)) else m.place.x to m.place.y
-            els += El("M:" + m.id, null, m, CtlKind.MACRO, px * w, py * h, size, size, m.place.scale, m.place.visible)
+            val marginX = max(size / 2f + 12f * dp, vw * 0.04f).coerceAtMost(vw / 2f)
+            val marginY = max(size / 2f + 10f * dp, vh * 0.035f).coerceAtMost(vh / 2f)
+            val cx = (left + px * vw).coerceIn(left + marginX, max(left + marginX, right - marginX))
+            val cy = (top + py * vh).coerceIn(top + marginY, max(top + marginY, bottom - marginY))
+            els += El("M:" + m.id, null, m, CtlKind.MACRO, cx, cy, size, size, m.place.scale, m.place.visible, m.place.opacity)
         }
+        selected = selectedKey?.let { key -> els.firstOrNull { it.key == key } }
         invalidate()
     }
 
@@ -147,6 +253,42 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     private val players = HashMap<String, MacroPlayer>()
     private val handler = Handler(Looper.getMainLooper())
     private var floatL: Pair<Float, Float>? = null // where a floating left stick was put down
+    private var playerTeamSize = 0
+    private var lastLoggedTeamSize = Int.MIN_VALUE
+    private var oneShotMask = 0
+
+    /** A short native button chord creates the same edge as pressing L3 and R3 together on a controller. */
+    private val releaseTeamSwap = Runnable {
+        oneShotMask = 0
+        recompute()
+    }
+
+    /** A right-stick-down pulse maps to both BT3 target-direction bits for the physical player pad. */
+    private val releaseTeamSelect = Runnable {
+        if (tracks.values.none { it.el?.ctl == Ctl.STICK_R }) {
+            rx = 128; ry = 128
+        }
+        recompute()
+    }
+
+    private val teamSizePoll = object : Runnable {
+        override fun run() {
+            if (!isAttachedToWindow) return
+            if (!editing) {
+                val current = TouchBridge.playerTeamSize()
+                if (current != lastLoggedTeamSize) {
+                    Log.i("bt3", "touch roster: overlay poll teamSize=$current editing=$editing")
+                    lastLoggedTeamSize = current
+                }
+                if (current != playerTeamSize) {
+                    playerTeamSize = current
+                    invalidate()
+                }
+            }
+            // Never let a temporary editor open permanently stop discovery of the active team.
+            handler.postDelayed(this, 500L)
+        }
+    }
 
     private inner class MacroPlayer(val macro: Macro) {
         var held = false
@@ -195,6 +337,9 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     }
 
     private fun releaseAll() {
+        handler.removeCallbacks(releaseTeamSwap)
+        handler.removeCallbacks(releaseTeamSelect)
+        oneShotMask = 0
         tracks.clear()
         pressedEls.clear()
         dpadBits = 0
@@ -211,7 +356,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         for (e in pressedEls) if (e.ctl != null) b = b or e.ctl.bit
         macroMask = 0
         for (p in players.values) macroMask = macroMask or p.mask
-        b = b or macroMask
+        b = b or macroMask or oneShotMask
         val packed = (b.toLong() shl 32) or (lx.toLong() shl 24) or (ly.toLong() shl 16) or (rx.toLong() shl 8) or ry.toLong()
         if (packed != lastSent[0]) {
             lastSent[0] = packed
@@ -250,11 +395,33 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         return true
     }
 
+    private fun isShownInCurrentMode(e: El): Boolean {
+        if (editing) {
+            // The right stick is only an internal target-selection input; PRÓX. sends its pulse. Do not draw
+            // this duplicate virtual stick in the editor. Every actual on-screen button remains editable,
+            // including Pause, Options, MENU/LUTA, Start/Select and controls hidden by the user.
+            return e.ctl != Ctl.STICK_R
+        }
+        // TEAM_SWAP is superseded by the existing L3/TROCA control at runtime, but remains editable here.
+        if (e.ctl == Ctl.TEAM_SWAP) return false
+        // L3/TROCA and PRÓX only appear in team battles. -1 is an unknown active state: fail open for diagnosis.
+        if ((e.ctl == Ctl.L3 || e.ctl == Ctl.TEAM_SELECT) && playerTeamSize in 0..1) return false
+        // This switch must remain reachable from either layout.
+        if (e.ctl == Ctl.NAV_MODE) return true
+        if (!e.visible) return false
+        if (!navigationMode) return e.ctl != Ctl.DPAD
+        return when (e.ctl) {
+            Ctl.DPAD, Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE,
+            Ctl.START, Ctl.SELECT, Ctl.MENU, Ctl.OPTIONS, Ctl.NAV_MODE -> true
+            else -> false // hide movement sticks, combat macros and shoulder actions while navigating menus
+        }
+    }
+
     private fun find(x: Float, y: Float, slack: Float = 1.12f, kinds: Set<CtlKind>? = null): El? {
         var best: El? = null
         var bestD = Float.MAX_VALUE
         for (e in els) {
-            if (!e.visible || (kinds != null && e.kind !in kinds)) continue
+            if (!isShownInCurrentMode(e) || (kinds != null && e.kind !in kinds)) continue
             if (e.hit(x, y, slack)) {
                 val d = hypot(x - e.cx, y - e.cy)
                 if (d < bestD) {
@@ -280,7 +447,13 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         if (e == null) return
         when (e.kind) {
             CtlKind.BUTTON, CtlKind.SHOULDER, CtlKind.PILL -> {
-                pressedEls += e; buzz(); recompute()
+                if (e.ctl == Ctl.L3) {
+                    // BT3's in-battle character switch is the L3+R3 chord, not L3 by itself.
+                    buzz()
+                    pulseTeamSwap()
+                } else {
+                    pressedEls += e; buzz(); recompute()
+                }
             }
             CtlKind.DPAD -> {
                 dpadBits = dpadDir(e, x, y); buzz(); recompute()
@@ -356,10 +529,38 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             CtlKind.SYSTEM -> {
                 pressedEls -= e; invalidate()
                 if (e.hit(x, y, 1.3f)) {
-                    if (e.ctl == Ctl.MENU) listener?.onMenu() else listener?.onOptions()
+                    when (e.ctl) {
+                        Ctl.MENU -> listener?.onMenu()
+                        Ctl.NAV_MODE -> {
+                            navigationMode = !navigationMode
+                            releaseAll()
+                        }
+                        Ctl.TEAM_SWAP -> pulseTeamSwap()
+                        Ctl.TEAM_SELECT -> pulseTeamSelect()
+                        Ctl.OPTIONS -> listener?.onOptions()
+                        else -> listener?.onOptions()
+                    }
                 }
             }
         }
+    }
+
+    private fun pulseTeamSwap() {
+        // 0/1 are known non-team states. -1 means the native state is not yet readable, so allow testing.
+        if (playerTeamSize in 0..1) return
+        handler.removeCallbacks(releaseTeamSwap)
+        oneShotMask = Ps2.L3 or Ps2.R3
+        recompute()
+        handler.postDelayed(releaseTeamSwap, 140L)
+    }
+
+    private fun pulseTeamSelect() {
+        if (playerTeamSize in 0..1 || tracks.values.any { it.el?.ctl == Ctl.STICK_R }) return
+        handler.removeCallbacks(releaseTeamSelect)
+        rx = 128
+        ry = 255 // one short down input advances the target; the injected engine mirrors it into RS_DOWN2
+        recompute()
+        handler.postDelayed(releaseTeamSelect, 100L)
     }
 
     private fun dpadDir(e: El, x: Float, y: Float): Int {
@@ -403,7 +604,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
 
     private var selected: El? = null
     private var dragging: Track? = null
-    private val toolRects = Array(5) { RectF() } // smaller, larger, show/hide, reset, done
+    private val toolRects = Array(7) { RectF() } // size −/+, opacity −/+, show/hide, reset, done
 
     private fun editTouch(ev: MotionEvent): Boolean {
         val x = ev.x
@@ -416,7 +617,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                 }
                 var e: El? = null
                 var bestD = Float.MAX_VALUE
-                for (el in els) if (el.hit(x, y, 1.1f)) {
+                for (el in els) if (isShownInCurrentMode(el) && el.hit(x, y, 1.1f)) {
                     val d = hypot(x - el.cx, y - el.cy)
                     if (d < bestD) {
                         bestD = d; e = el
@@ -428,8 +629,12 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             }
             MotionEvent.ACTION_MOVE -> dragging?.let { t ->
                 val e = t.el ?: return true
-                e.cx = (t.originX + x - t.downX).coerceIn(0f, width.toFloat())
-                e.cy = (t.originY + y - t.downY).coerceIn(0f, height.toFloat())
+                val minX = safeInsetLeftPx + max(e.w / 2f + 12f * dp, safeWidth * 0.04f).coerceAtMost(safeWidth / 2f)
+                val maxX = width - safeInsetRightPx - max(e.w / 2f + 12f * dp, safeWidth * 0.04f).coerceAtMost(safeWidth / 2f)
+                val minY = safeInsetTopPx + max(e.h / 2f + 10f * dp, safeHeight * 0.035f).coerceAtMost(safeHeight / 2f)
+                val maxY = height - safeInsetBottomPx - max(e.h / 2f + 10f * dp, safeHeight * 0.035f).coerceAtMost(safeHeight / 2f)
+                e.cx = (t.originX + x - t.downX).coerceIn(minX, max(minX, maxX))
+                e.cy = (t.originY + y - t.downY).coerceIn(minY, max(minY, maxY))
                 t.moved = true
                 invalidate()
             }
@@ -455,13 +660,24 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     store(e)
                 }
             }
-            2 -> if (e != null) {
+            2, 3 -> {
+                val delta = if (i == 2) -10 else 10
+                if (e == null) {
+                    config = config.copy(opacity = (config.opacity + delta).coerceIn(10, 100))
+                    listener?.onConfigChanged(config)
+                    rebuild()
+                } else {
+                    e.opacity = (e.opacity + delta).coerceIn(10, 100)
+                    store(e)
+                }
+            }
+            4 -> if (e != null) {
                 e.visible = !e.visible
                 store(e)
             }
-            3 -> {
+            5 -> {
                 config = if (e == null) {
-                    config.copy(places = emptyMap(), scale = 1f, macros = config.macros.map { it.copy(place = Placement(0.74f, 0.40f)) })
+                    config.copy(places = emptyMap(), scale = 1f, opacity = 70, macros = config.macros.map { it.copy(place = Placement(0.74f, 0.40f)) })
                 } else if (e.ctl != null) {
                     config.copy(places = config.places - e.ctl)
                 } else {
@@ -470,7 +686,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                 selected = null
                 listener?.onConfigChanged(config)
             }
-            4 -> {
+            6 -> {
                 selected = null
                 listener?.onEditDone()
             }
@@ -480,7 +696,11 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
 
     /** The element's position, scale and visibility into the configuration. */
     private fun store(e: El) {
-        val p = Placement((e.cx / width).coerceIn(0f, 1f), (e.cy / height).coerceIn(0f, 1f), e.scale, e.visible)
+        val p = Placement(
+            ((e.cx - safeInsetLeftPx) / safeWidth).coerceIn(0f, 1f),
+            ((e.cy - safeInsetTopPx) / safeHeight).coerceIn(0f, 1f),
+            e.scale, e.visible, e.opacity,
+        )
         val key = e.key
         config = if (e.ctl != null) {
             config.copy(places = config.places + (e.ctl to p))
@@ -513,9 +733,10 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         if (!editing && (suppressed || hiddenForPad || config.mode == TouchMode.OFF)) return
         val alpha = config.opacity / 100f
         for (e in els) {
-            if (!e.visible && !editing) continue
-            val k = if (!e.visible) 0.3f else alpha
-            val pressed = e in pressedEls || (e.kind == CtlKind.MACRO && e.macro?.let { players[it.id]?.held } == true)
+            if (!isShownInCurrentMode(e)) continue
+            val k = if (!e.visible) 0.3f else alpha * (e.opacity / 100f)
+            val pressed = e in pressedEls || (e.ctl == Ctl.L3 && oneShotMask != 0) ||
+                (e.kind == CtlKind.MACRO && e.macro?.let { players[it.id]?.held } == true)
             drawEl(canvas, e, k, pressed)
             if (editing && e === selected) {
                 dash.strokeWidth = 2.5f * dp
@@ -527,75 +748,381 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     }
 
     private fun drawEl(c: Canvas, e: El, k: Float, pressed: Boolean) {
-        val skin = config.skin
-        val base = if (pressed) Color.argb(200, 255, 255, 255) else Color.argb(150, 20, 20, 26)
-        val ring = Color.argb(200, 255, 255, 255)
+        val ctl = e.ctl
+        val action = ctl?.let(::actionName)
+        val accent = ctl?.let(::actionColor) ?: Color.rgb(80, 190, 240)
+        val base = Color.rgb(12, 18, 31)
+        val white = Color.rgb(238, 245, 255)
         stroke.strokeWidth = 2f * dp
         when (e.kind) {
             CtlKind.BUTTON -> {
-                val ctl = e.ctl!!
+                val button = ctl!!
                 val r = e.w / 2 * (if (pressed) 0.93f else 1f)
-                val face = faceColor(skin, ctl)
-                fill.color = a(if (pressed) lighten(face) else if (skin == PadSkin.XBOX) face else base, k)
+                fill.color = a(if (pressed) Color.rgb(34, 58, 82) else base, k)
                 c.drawCircle(e.cx, e.cy, r, fill)
-                stroke.color = a(if (skin == PadSkin.XBOX) Color.argb(120, 255, 255, 255) else ring, k)
+                stroke.color = a(if (pressed) Color.WHITE else accent, k)
+                stroke.strokeWidth = (if (pressed) 3f else 2f) * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
-                if (skin == PadSkin.PLAYSTATION && ctl in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
-                    psSymbol(c, ctl, e.cx, e.cy, r * 0.42f, a(if (pressed) Color.rgb(30, 30, 30) else face, k))
+                if (navigationMode && button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
+                    // In menus, show the actual confirm/cancel legend instead of combat-action artwork.
+                    if (config.skin == PadSkin.PLAYSTATION) {
+                        psSymbol(c, button, e.cx, e.cy - r * 0.12f, r * 0.36f, a(white, k))
+                    } else {
+                        label(c, faceLabel(config.skin, button), e.cx, e.cy - r * 0.12f, r * 0.9f, a(white, k))
+                    }
+                    val menuLabel = when (button) {
+                        Ctl.CROSS -> "OK"
+                        Ctl.CIRCLE -> "VOLTAR"
+                        Ctl.SQUARE -> "AÇÃO"
+                        else -> "RETORNO"
+                    }
+                    label(c, menuLabel, e.cx, e.cy + r * 0.58f, r * 1.05f, a(white, k))
+                } else if (button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE, Ctl.L3, Ctl.R3, Ctl.BLAST1, Ctl.BLAST2, Ctl.ULTIMATE)) {
+                    drawActionGlyph(c, button, e.cx, e.cy - r * 0.12f, r * 0.34f, a(accent, k))
+                    label(c, action ?: "", e.cx, e.cy + r * 0.57f, r * 0.92f, a(white, k))
+                    drawControlBadge(c, button, e.cx + r * 0.64f, e.cy - r * 0.64f, r * 0.34f, k)
                 } else {
-                    label(c, faceLabel(skin, ctl), e.cx, e.cy, r * 0.9f, a(if (skin == PadSkin.XBOX && ctl == Ctl.TRIANGLE) Color.rgb(40, 34, 10) else if (pressed) Color.rgb(30, 30, 30) else Color.WHITE, k))
+                    label(c, faceLabel(config.skin, button), e.cx, e.cy, r * 0.9f, a(white, k))
                 }
             }
-            CtlKind.SHOULDER, CtlKind.PILL -> {
+            CtlKind.SHOULDER -> {
                 rect.set(e.cx - e.w / 2, e.cy - e.h / 2, e.cx + e.w / 2, e.cy + e.h / 2)
                 val rr = e.h / 2
-                fill.color = a(base, k)
+                fill.color = a(if (pressed) Color.rgb(34, 58, 82) else base, k)
                 c.drawRoundRect(rect, rr, rr, fill)
-                stroke.color = a(ring, k)
+                stroke.color = a(if (pressed) Color.WHITE else accent, k)
+                stroke.strokeWidth = (if (pressed) 3f else 1.8f) * dp
                 c.drawRoundRect(rect, rr, rr, stroke)
-                label(c, faceLabel(skin, e.ctl!!), e.cx, e.cy, e.h * 0.85f, a(if (pressed) Color.rgb(30, 30, 30) else Color.WHITE, k))
+                if (ctl != null && ctl in listOf(Ctl.L1, Ctl.L2, Ctl.R1, Ctl.R2)) {
+                    drawActionGlyph(c, ctl, e.cx - e.w * 0.23f, e.cy, e.h * 0.22f, a(accent, k))
+                    label(c, action ?: "", e.cx + e.w * 0.07f, e.cy, e.w * 0.53f, a(white, k))
+                    drawControlBadge(c, ctl, e.cx + e.w * 0.39f, e.cy - e.h * 0.19f, e.h * 0.31f, k)
+                } else {
+                    label(c, ctl?.let { faceLabel(config.skin, it) } ?: "", e.cx, e.cy, e.h * 0.85f, a(white, k))
+                }
+            }
+            CtlKind.PILL -> {
+                rect.set(e.cx - e.w / 2, e.cy - e.h / 2, e.cx + e.w / 2, e.cy + e.h / 2)
+                val rr = e.h / 2
+                fill.color = a(if (pressed) Color.rgb(34, 58, 82) else base, k)
+                c.drawRoundRect(rect, rr, rr, fill)
+                stroke.color = a(if (pressed) Color.WHITE else Color.rgb(105, 139, 175), k)
+                c.drawRoundRect(rect, rr, rr, stroke)
+                val utilityLabel = when (ctl) {
+                    Ctl.START -> if (navigationMode) "START" else "PAUSA"
+                    Ctl.SELECT -> if (navigationMode) "VOLTAR" else "ZOOM"
+                    else -> ""
+                }
+                label(c, utilityLabel, e.cx, e.cy, e.h * 0.85f, a(white, k))
             }
             CtlKind.DPAD -> drawDpad(c, e, k)
             CtlKind.STICK_L, CtlKind.STICK_R -> {
                 val (sx, sy) = if (e.kind == CtlKind.STICK_L) lx to ly else rx to ry
                 val (ox, oy) = if (e.kind == CtlKind.STICK_L) (floatL ?: (e.cx to e.cy)) else (e.cx to e.cy)
-                fill.color = a(Color.argb(110, 20, 20, 26), k)
+                fill.color = a(Color.rgb(9, 21, 38), k)
                 c.drawCircle(ox, oy, e.w / 2, fill)
-                stroke.color = a(ring, k)
+                stroke.color = a(Color.rgb(81, 189, 239), k)
+                stroke.strokeWidth = 2.2f * dp
                 c.drawCircle(ox, oy, e.w / 2, stroke)
+                stroke.strokeWidth = 1f * dp
+                stroke.color = a(Color.rgb(59, 119, 159), k)
+                c.drawCircle(ox, oy, e.w * 0.37f, stroke)
+                c.drawCircle(ox, oy, e.w * 0.22f, stroke)
+                // Four faint orientation ticks make the movement zone readable without looking like a d-pad.
+                for (i in 0..3) {
+                    val angle = i * (Math.PI / 2.0)
+                    val dx = kotlin.math.cos(angle).toFloat()
+                    val dy = kotlin.math.sin(angle).toFloat()
+                    c.drawLine(ox + dx * e.w * 0.40f, oy + dy * e.w * 0.40f,
+                        ox + dx * e.w * 0.46f, oy + dy * e.w * 0.46f, stroke)
+                }
                 val kx = ox + (sx - 128) / 127f * e.w * 0.40f
                 val ky = oy + (sy - 128) / 127f * e.w * 0.40f
-                fill.color = a(if (sx != 128 || sy != 128) Color.argb(230, 255, 255, 255) else Color.argb(190, 70, 70, 80), k)
+                fill.color = a(if (sx != 128 || sy != 128) Color.rgb(115, 220, 255) else Color.rgb(52, 91, 124), k)
                 c.drawCircle(kx, ky, e.w * 0.24f, fill)
-                stroke.color = a(ring, k)
+                stroke.color = a(white, k)
+                stroke.strokeWidth = 1.6f * dp
                 c.drawCircle(kx, ky, e.w * 0.24f, stroke)
+                fill.color = a(Color.rgb(235, 249, 255), k)
+                c.drawCircle(kx - e.w * 0.055f, ky - e.w * 0.055f, e.w * 0.055f, fill)
             }
             CtlKind.SYSTEM -> {
                 val r = e.w / 2
-                fill.color = a(base, k)
+                val accent = when (ctl) {
+                    Ctl.TEAM_SELECT -> Color.rgb(255, 181, 74)
+                    Ctl.TEAM_SWAP -> Color.rgb(64, 204, 170)
+                    else -> Color.rgb(105, 139, 175)
+                }
+                fill.color = a(if (pressed) Color.rgb(34, 48, 69) else base, k)
                 c.drawCircle(e.cx, e.cy, r, fill)
-                stroke.color = a(ring, k)
+                val navActive = ctl == Ctl.NAV_MODE && navigationMode
+                stroke.color = a(if (navActive) Color.rgb(255, 176, 52) else accent, k)
+                stroke.strokeWidth = if (navActive || pressed) 3f * dp else 2f * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
-                fill.color = a(if (pressed) Color.rgb(30, 30, 30) else Color.WHITE, k)
-                if (e.ctl == Ctl.MENU) { // pause bars
+                stroke.strokeWidth = 2f * dp
+                fill.color = a(white, k)
+                if (ctl == Ctl.MENU) {
                     val bw = r * 0.18f
                     val bh = r * 0.8f
                     c.drawRect(e.cx - r * 0.3f - bw / 2, e.cy - bh / 2, e.cx - r * 0.3f + bw / 2, e.cy + bh / 2, fill)
                     c.drawRect(e.cx + r * 0.3f - bw / 2, e.cy - bh / 2, e.cx + r * 0.3f + bw / 2, e.cy + bh / 2, fill)
-                } else { // three dots
+                } else if (ctl == Ctl.NAV_MODE) {
+                    // Four-way arrow icon; the caption tells the user which layout will be entered.
+                    val arrow = r * 0.62f
+                    stroke.color = a(if (navActive) Color.rgb(255, 190, 70) else white, k)
+                    stroke.strokeWidth = 2.2f * dp
+                    for (i in 0..3) {
+                        val angle = i * (Math.PI / 2.0)
+                        val dx = kotlin.math.cos(angle).toFloat()
+                        val dy = kotlin.math.sin(angle).toFloat()
+                        c.drawLine(e.cx - dx * arrow * 0.35f, e.cy - dy * arrow * 0.35f,
+                            e.cx + dx * arrow * 0.62f, e.cy + dy * arrow * 0.62f, stroke)
+                        val side = arrow * 0.24f
+                        path.reset()
+                        path.moveTo(e.cx + dx * arrow * 0.62f, e.cy + dy * arrow * 0.62f)
+                        path.lineTo(e.cx + dx * arrow * 0.28f - dy * side, e.cy + dy * arrow * 0.28f + dx * side)
+                        path.lineTo(e.cx + dx * arrow * 0.28f + dy * side, e.cy + dy * arrow * 0.28f - dx * side)
+                        path.close()
+                        c.drawPath(path, fill)
+                    }
+                    label(c, if (navigationMode) "LUTA" else "MENU", e.cx, e.cy + r * 1.42f, r * 1.9f, a(white, k))
+                } else if (ctl == Ctl.TEAM_SELECT) {
+                    // Three small roster cards with the centre card highlighted.
+                    val cw = r * 0.39f
+                    val ch = r * 0.57f
+                    for (i in -1..1) {
+                        val cx = e.cx + i * cw * 0.88f
+                        val card = RectF(cx - cw * 0.42f, e.cy - ch * 0.5f, cx + cw * 0.42f, e.cy + ch * 0.5f)
+                        fill.color = a(if (i == 0) accent else Color.rgb(53, 75, 97), k)
+                        c.drawRoundRect(card, 2f * dp, 2f * dp, fill)
+                        stroke.color = a(if (i == 0) accent else white, k)
+                        stroke.strokeWidth = 1.4f * dp
+                        c.drawRoundRect(card, 2f * dp, 2f * dp, stroke)
+                    }
+                    stroke.color = a(white, k)
+                    stroke.strokeWidth = 1.8f * dp
+                    c.drawLine(e.cx + r * 0.69f, e.cy - r * 0.1f, e.cx + r * 0.69f, e.cy + r * 0.3f, stroke)
+                    path.reset()
+                    path.moveTo(e.cx + r * 0.53f, e.cy + r * 0.17f)
+                    path.lineTo(e.cx + r * 0.69f, e.cy + r * 0.34f)
+                    path.lineTo(e.cx + r * 0.85f, e.cy + r * 0.17f)
+                    path.close()
+                    fill.color = a(white, k)
+                    c.drawPath(path, fill)
+                    label(c, "PRÓX", e.cx, e.cy + r * 1.42f, r * 1.8f, a(white, k))
+                } else if (ctl == Ctl.TEAM_SWAP) {
+                    // Two opposing arrows mean switch to the selected team member.
+                    stroke.color = a(white, k)
+                    stroke.strokeWidth = 2.5f * dp
+                    stroke.strokeCap = Paint.Cap.ROUND
+                    val ax1 = e.cx - r * 0.53f; val ax2 = e.cx + r * 0.44f
+                    val ay1 = e.cy - r * 0.2f; val ay2 = e.cy + r * 0.2f
+                    c.drawLine(ax1, ay1, ax2, ay1, stroke)
+                    c.drawLine(ax2, ay1, ax2 - r * 0.2f, ay1 - r * 0.17f, stroke)
+                    c.drawLine(ax2, ay1, ax2 - r * 0.2f, ay1 + r * 0.17f, stroke)
+                    c.drawLine(ax2, ay2, ax1, ay2, stroke)
+                    c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 - r * 0.17f, stroke)
+                    c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 + r * 0.17f, stroke)
+                    stroke.strokeCap = Paint.Cap.BUTT
+                    label(c, "TROCAR", e.cx, e.cy + r * 1.42f, r * 2.15f, a(white, k))
+                } else {
                     for (i in -1..1) c.drawCircle(e.cx + i * r * 0.42f, e.cy, r * 0.12f, fill)
                 }
             }
             CtlKind.MACRO -> {
                 val r = e.w / 2 * (if (pressed) 0.93f else 1f)
-                fill.color = a(if (pressed) Color.rgb(255, 176, 32) else Color.argb(150, 20, 20, 26), k)
+                fill.color = a(if (pressed) Color.rgb(255, 198, 75) else base, k)
                 c.drawCircle(e.cx, e.cy, r, fill)
-                stroke.color = a(Color.rgb(255, 138, 31), k)
-                stroke.strokeWidth = 3f * dp
+                stroke.color = a(Color.rgb(255, 183, 70), k)
+                stroke.strokeWidth = 2.5f * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
-                label(c, e.macro?.name?.take(5) ?: "M", e.cx, e.cy, r * 0.7f, a(if (pressed) Color.rgb(30, 30, 30) else Color.WHITE, k))
+                drawActionGlyph(c, Ctl.TRIANGLE, e.cx, e.cy - r * 0.12f, r * 0.34f, a(Color.rgb(255, 198, 75), k))
+                label(c, e.macro?.name?.take(5) ?: "MACRO", e.cx, e.cy + r * 0.55f, r * 0.9f, a(white, k))
             }
         }
+    }
+
+    /** Action icon and action name stay constant; only the small reference badge changes with the selected pad. */
+    private fun actionName(ctl: Ctl): String = when (ctl) {
+        Ctl.CROSS -> "DASH"
+        Ctl.CIRCLE -> "DEF"
+        Ctl.SQUARE -> "SOCO"
+        Ctl.TRIANGLE -> "KI"
+        Ctl.L1 -> "ALVO"
+        Ctl.L2 -> "CARREGAR"
+        Ctl.R1 -> "SUBIR"
+        Ctl.R2 -> "DESCER"
+        Ctl.L3 -> "TROCA"
+        Ctl.R3 -> "FORMA"
+        Ctl.BLAST1 -> "SUP.1"
+        Ctl.BLAST2 -> "SUP.2"
+        Ctl.ULTIMATE -> "ULT"
+        else -> faceLabel(config.skin, ctl)
+    }
+
+    private fun actionColor(ctl: Ctl): Int = when (ctl) {
+        Ctl.CROSS -> Color.rgb(81, 196, 255)       // dash / movement
+        Ctl.CIRCLE -> Color.rgb(77, 224, 188)     // defence
+        Ctl.SQUARE -> Color.rgb(255, 183, 70)     // physical attack
+        Ctl.TRIANGLE -> Color.rgb(116, 160, 255)  // Ki blast
+        Ctl.L1 -> Color.rgb(115, 190, 235)
+        Ctl.L2 -> Color.rgb(95, 177, 255)
+        Ctl.R1, Ctl.R2 -> Color.rgb(170, 190, 219)
+        Ctl.L3, Ctl.R3 -> Color.rgb(255, 198, 75)
+        Ctl.BLAST1 -> Color.rgb(255, 181, 74)
+        Ctl.TEAM_SELECT -> Color.rgb(255, 181, 74)
+        Ctl.TEAM_SWAP -> Color.rgb(64, 204, 170)
+        Ctl.BLAST2 -> Color.rgb(149, 135, 255)
+        Ctl.ULTIMATE -> Color.rgb(255, 105, 93)
+        else -> Color.rgb(105, 139, 175)
+    }
+
+    private fun drawControlBadge(c: Canvas, ctl: Ctl, x: Float, y: Float, r: Float, k: Float) {
+        val sticker = when (ctl) {
+            Ctl.BLAST1 -> Ctl.CIRCLE
+            Ctl.BLAST2, Ctl.ULTIMATE -> Ctl.TRIANGLE
+            else -> ctl
+        }
+        fill.color = a(Color.rgb(22, 31, 48), k)
+        c.drawCircle(x, y, r, fill)
+        stroke.color = a(actionColor(ctl), k)
+        stroke.strokeWidth = max(1.2f * dp, r * 0.13f)
+        c.drawCircle(x, y, r, stroke)
+        if (config.skin == PadSkin.PLAYSTATION && sticker in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
+            psSymbol(c, sticker, x, y, r * 0.43f, a(Color.WHITE, k))
+        } else {
+            label(c, faceLabel(config.skin, sticker), x, y, r * 1.35f, a(Color.WHITE, k))
+        }
+    }
+
+    /** Small Canvas-drawn glyphs keep the overlay lightweight and independent of bitmap assets. */
+    private fun drawActionGlyph(c: Canvas, ctl: Ctl, x: Float, y: Float, r: Float, color: Int) {
+        val oldWidth = stroke.strokeWidth
+        val oldCap = stroke.strokeCap
+        val oldJoin = stroke.strokeJoin
+        stroke.color = color
+        stroke.strokeWidth = max(1.8f * dp, r * 0.16f)
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeJoin = Paint.Join.ROUND
+        fill.color = color
+        when (ctl) {
+            Ctl.SQUARE -> { // stylised fist: knuckles and palm
+                val nw = r * 0.36f
+                val nh = r * 0.34f
+                for (i in 0..2) {
+                    rect.set(x - r * 0.58f + i * nw * 0.94f, y - r * 0.53f, x - r * 0.58f + i * nw * 0.94f + nw * 0.82f, y - r * 0.53f + nh)
+                    c.drawRoundRect(rect, nh * 0.18f, nh * 0.18f, fill)
+                }
+                path.reset()
+                path.moveTo(x - r * 0.62f, y - r * 0.13f)
+                path.lineTo(x + r * 0.47f, y - r * 0.13f)
+                path.lineTo(x + r * 0.57f, y + r * 0.37f)
+                path.lineTo(x + r * 0.22f, y + r * 0.61f)
+                path.lineTo(x - r * 0.43f, y + r * 0.46f)
+                path.close()
+                c.drawPath(path, fill)
+                c.drawLine(x - r * 0.25f, y + r * 0.13f, x + r * 0.27f, y + r * 0.13f, stroke)
+            }
+            Ctl.CIRCLE -> { // shield
+                path.reset()
+                path.moveTo(x, y - r * 0.75f)
+                path.lineTo(x + r * 0.62f, y - r * 0.48f)
+                path.lineTo(x + r * 0.52f, y + r * 0.22f)
+                path.lineTo(x, y + r * 0.76f)
+                path.lineTo(x - r * 0.52f, y + r * 0.22f)
+                path.lineTo(x - r * 0.62f, y - r * 0.48f)
+                path.close()
+                c.drawPath(path, stroke)
+                c.drawLine(x, y - r * 0.4f, x, y + r * 0.35f, stroke)
+            }
+            Ctl.CROSS -> { // dash / speed streaks
+                c.drawLine(x - r * 0.78f, y - r * 0.35f, x + r * 0.2f, y - r * 0.35f, stroke)
+                c.drawLine(x - r * 0.95f, y, x + r * 0.52f, y, stroke)
+                c.drawLine(x - r * 0.68f, y + r * 0.35f, x + r * 0.2f, y + r * 0.35f, stroke)
+                c.drawLine(x + r * 0.06f, y - r * 0.44f, x + r * 0.67f, y, stroke)
+                c.drawLine(x + r * 0.67f, y, x + r * 0.06f, y + r * 0.44f, stroke)
+            }
+            Ctl.TRIANGLE -> { // Ki spark
+                for (i in 0..3) {
+                    val a = i * (Math.PI / 2.0)
+                    val dx = kotlin.math.cos(a).toFloat()
+                    val dy = kotlin.math.sin(a).toFloat()
+                    c.drawLine(x + dx * r * 0.22f, y + dy * r * 0.22f, x + dx * r * 0.78f, y + dy * r * 0.78f, stroke)
+                }
+                c.drawCircle(x, y, r * 0.23f, fill)
+            }
+            Ctl.L1 -> { // lock-on target
+                c.drawCircle(x, y, r * 0.62f, stroke)
+                c.drawCircle(x, y, r * 0.20f, stroke)
+                c.drawLine(x - r, y, x - r * 0.5f, y, stroke)
+                c.drawLine(x + r * 0.5f, y, x + r, y, stroke)
+                c.drawLine(x, y - r, x, y - r * 0.5f, stroke)
+                c.drawLine(x, y + r * 0.5f, x, y + r, stroke)
+            }
+            Ctl.L2, Ctl.R3 -> { // charging aura / transformation spark
+                path.reset()
+                path.moveTo(x + r * 0.12f, y - r * 0.82f)
+                path.lineTo(x - r * 0.38f, y - r * 0.05f)
+                path.lineTo(x - r * 0.02f, y - r * 0.05f)
+                path.lineTo(x - r * 0.18f, y + r * 0.76f)
+                path.lineTo(x + r * 0.43f, y - r * 0.12f)
+                path.lineTo(x + r * 0.08f, y - r * 0.12f)
+                path.close()
+                c.drawPath(path, fill)
+            }
+            Ctl.R1, Ctl.R2 -> { // flight height
+                val d = if (ctl == Ctl.R1) -1f else 1f
+                c.drawLine(x, y - d * r * 0.75f, x, y + d * r * 0.55f, stroke)
+                c.drawLine(x, y + d * r * 0.55f, x - r * 0.48f, y + d * r * 0.10f, stroke)
+                c.drawLine(x, y + d * r * 0.55f, x + r * 0.48f, y + d * r * 0.10f, stroke)
+            }
+            Ctl.L3 -> { // character switch
+                c.drawLine(x - r * 0.75f, y - r * 0.25f, x + r * 0.50f, y - r * 0.25f, stroke)
+                c.drawLine(x + r * 0.50f, y - r * 0.25f, x + r * 0.20f, y - r * 0.52f, stroke)
+                c.drawLine(x + r * 0.50f, y - r * 0.25f, x + r * 0.20f, y + r * 0.02f, stroke)
+                c.drawLine(x + r * 0.75f, y + r * 0.32f, x - r * 0.50f, y + r * 0.32f, stroke)
+                c.drawLine(x - r * 0.50f, y + r * 0.32f, x - r * 0.20f, y + r * 0.05f, stroke)
+                c.drawLine(x - r * 0.50f, y + r * 0.32f, x - r * 0.20f, y + r * 0.59f, stroke)
+            }
+            Ctl.BLAST1 -> { // compressed energy wave
+                c.drawCircle(x, y, r * 0.31f, stroke)
+                c.drawCircle(x, y, r * 0.62f, stroke)
+                for (i in 0..3) {
+                    val a = i * (Math.PI / 2.0) + Math.PI / 4.0
+                    val dx = kotlin.math.cos(a).toFloat()
+                    val dy = kotlin.math.sin(a).toFloat()
+                    c.drawLine(x + dx * r * 0.72f, y + dy * r * 0.72f, x + dx * r * 0.98f, y + dy * r * 0.98f, stroke)
+                }
+            }
+            Ctl.BLAST2 -> { // stronger energy sphere
+                c.drawCircle(x, y, r * 0.36f, fill)
+                c.drawCircle(x, y, r * 0.64f, stroke)
+                c.drawOval(x - r * 0.92f, y - r * 0.42f, x + r * 0.92f, y + r * 0.42f, stroke)
+                c.drawOval(x - r * 0.42f, y - r * 0.92f, x + r * 0.42f, y + r * 0.92f, stroke)
+            }
+            Ctl.ULTIMATE -> { // explosive finishing move
+                for (i in 0..7) {
+                    val a = i * (Math.PI / 4.0)
+                    val dx = kotlin.math.cos(a).toFloat()
+                    val dy = kotlin.math.sin(a).toFloat()
+                    c.drawLine(x + dx * r * 0.22f, y + dy * r * 0.22f, x + dx * r * 0.90f, y + dy * r * 0.90f, stroke)
+                }
+                path.reset()
+                path.moveTo(x, y - r * 0.34f)
+                path.lineTo(x + r * 0.28f, y)
+                path.lineTo(x, y + r * 0.34f)
+                path.lineTo(x - r * 0.28f, y)
+                path.close()
+                c.drawPath(path, fill)
+            }
+            else -> {
+                c.drawCircle(x, y, r * 0.58f, stroke)
+                c.drawLine(x - r * 0.6f, y + r * 0.6f, x + r * 0.6f, y - r * 0.6f, stroke)
+            }
+        }
+        stroke.strokeWidth = oldWidth
+        stroke.strokeCap = oldCap
+        stroke.strokeJoin = oldJoin
     }
 
     private fun drawDpad(c: Canvas, e: El, k: Float) {
@@ -603,9 +1130,9 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         val arm = s * 0.36f
         fun seg(bit: Int, l: Float, t: Float, r: Float, b: Float) {
             rect.set(e.cx + l, e.cy + t, e.cx + r, e.cy + b)
-            fill.color = a(if (dpadBits and bit != 0) Color.argb(220, 255, 255, 255) else Color.argb(150, 20, 20, 26), k)
+            fill.color = a(if (dpadBits and bit != 0) Color.rgb(81, 196, 255) else Color.rgb(12, 18, 31), k)
             c.drawRoundRect(rect, arm * 0.35f, arm * 0.35f, fill)
-            stroke.color = a(Color.argb(200, 255, 255, 255), k)
+            stroke.color = a(Color.rgb(105, 139, 175), k)
             c.drawRoundRect(rect, arm * 0.35f, arm * 0.35f, stroke)
         }
         seg(Ps2.UP, -arm, -s, arm, -arm * 0.6f)
@@ -613,7 +1140,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         seg(Ps2.LEFT, -s, -arm, -arm * 0.6f, arm)
         seg(Ps2.RIGHT, arm * 0.6f, -arm, s, arm)
         // arrows
-        fill.color = a(Color.WHITE, k)
+        fill.color = a(Color.rgb(238, 245, 255), k)
         val t = arm * 0.45f
         fun tri(x: Float, y: Float, dx: Float, dy: Float) {
             path.reset()
@@ -664,45 +1191,101 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     private fun lighten(col: Int): Int = Color.rgb(min(255, Color.red(col) + 70), min(255, Color.green(col) + 70), min(255, Color.blue(col) + 70))
 
     private fun drawToolbar(c: Canvas) {
-        val labels = listOf("−", "+", context.getString(if (selected?.visible == false) R.string.touch_show else R.string.touch_hide),
-            context.getString(R.string.touch_reset), context.getString(R.string.touch_done))
-        val h = 44f * dp
-        val gap = 8f * dp
-        text.textSize = 16f * dp
-        val widths = labels.mapIndexed { i, s -> if (i < 2) h else text.measureText(s) + 28f * dp }
-        var x = (width - (widths.sum() + gap * (labels.size - 1))) / 2
-        val y = 14f * dp
-        labels.forEachIndexed { i, s ->
+        val labels = listOf(
+            "−", "+", "α−", "α+",
+            context.getString(if (selected?.visible == false) R.string.touch_show else R.string.touch_hide),
+            context.getString(R.string.touch_reset), context.getString(R.string.touch_done),
+        )
+        val baseH = 22f * dp
+        val baseGap = 2.5f * dp
+        text.textSize = 10f * dp
+        val baseWidths = labels.mapIndexed { i, label -> if (i < 4) baseH else text.measureText(label) + 12f * dp }
+        val baseTotal = baseWidths.sum() + baseGap * (labels.size - 1)
+        val left = safeInsetLeftPx + 8f * dp
+        val safeRight = width - safeInsetRightPx - 8f * dp
+        val available = (safeRight - left).coerceAtLeast(1f)
+        val fit = min(1f, available / baseTotal)
+        val h = baseH * fit
+        val gap = baseGap * fit
+        val widths = baseWidths.map { it * fit }
+        val total = widths.sum() + gap * (labels.size - 1)
+        // Pin the editor toolbar to the upper-left safe corner, never the horizontal centre over MENU/PAUSE.
+        val x0 = left
+        val y = safeInsetTopPx + 1f * dp
+
+        rect.set(x0 - 4f * dp, y - 1f * dp, x0 + total + 4f * dp, y + h + 14f * dp)
+        fill.color = Color.argb(232, 11, 16, 32)
+        c.drawRoundRect(rect, 9f * dp, 9f * dp, fill)
+
+        var x = x0
+        labels.forEachIndexed { i, label ->
             toolRects[i].set(x, y, x + widths[i], y + h)
-            fill.color = if (i == 4) Color.rgb(255, 138, 31) else Color.argb(225, 28, 28, 36)
-            if (i == 2 && selected == null) fill.color = Color.argb(120, 28, 28, 36)
-            c.drawRoundRect(toolRects[i], h / 2, h / 2, fill)
-            text.color = if (i == 4) Color.rgb(30, 20, 10) else Color.WHITE
-            text.textSize = if (i < 2) 24f * dp else 16f * dp
+            fill.color = when {
+                i == 4 && selected != null -> Color.rgb(255, 138, 31)
+                i == 4 -> Color.argb(135, 60, 65, 78)
+                i == 6 -> Color.rgb(35, 154, 110)
+                else -> Color.argb(238, 28, 31, 42)
+            }
+            c.drawRoundRect(toolRects[i], h / 2f, h / 2f, fill)
+            stroke.color = Color.argb(95, 255, 255, 255)
+            stroke.strokeWidth = 1f * dp
+            c.drawRoundRect(toolRects[i], h / 2f, h / 2f, stroke)
+            text.color = if (i == 4 && selected != null) Color.rgb(30, 20, 10) else Color.WHITE
+            text.textSize = (if (i < 4) 14f else 10f) * dp * fit
+            text.textAlign = Paint.Align.CENTER
             val fm = text.fontMetrics
-            c.drawText(s, toolRects[i].centerX(), toolRects[i].centerY() - (fm.ascent + fm.descent) / 2, text)
+            c.drawText(label, toolRects[i].centerX(), toolRects[i].centerY() - (fm.ascent + fm.descent) / 2, text)
             x += widths[i] + gap
         }
-        // what the buttons act on
-        text.textSize = 13f * dp
-        text.color = Color.WHITE
-        val what = selected?.let { nameOf(it) } ?: context.getString(R.string.touch_all_controls)
-        c.drawText(what, width / 2f, y + h + 22f * dp, text)
+
+        // Short, left-aligned help text stays below the toolbar and fits inside the same safe rectangle.
+        var status = if (selected == null) {
+            "Todos • ${config.opacity}% | arraste: mover • toque: selecionar"
+        } else {
+            "${nameOf(selected!!).take(16)} • ${selected!!.opacity}% | arraste: mover"
+        }
+        text.textAlign = Paint.Align.LEFT
+        text.color = Color.rgb(224, 232, 245)
+        text.textSize = 8.5f * dp * fit
+        val maxStatusWidth = (safeRight - x0).coerceAtLeast(1f)
+        val measured = text.measureText(status)
+        if (measured > maxStatusWidth && measured > 0f) {
+            text.textSize *= maxStatusWidth / measured
+        }
+        c.drawText(status, x0, y + h + 10.5f * dp, text)
+        text.textAlign = Paint.Align.CENTER
     }
 
     private fun nameOf(e: El): String = e.macro?.name ?: when (e.ctl) {
         Ctl.DPAD -> "D-pad"
-        Ctl.STICK_L -> "L stick"
-        Ctl.STICK_R -> "R stick"
+        Ctl.STICK_L -> "Analógico de movimento"
+        Ctl.STICK_R -> "Analógico direito"
         Ctl.MENU -> context.getString(R.string.touch_ctl_menu)
         Ctl.OPTIONS -> context.getString(R.string.touch_ctl_options)
+        Ctl.NAV_MODE -> "Alternar modo menu/luta"
+        Ctl.TEAM_SELECT -> "Selecionar próximo personagem da equipe"
+        Ctl.TEAM_SWAP -> "Trocar para o personagem selecionado"
+        Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE, Ctl.L1, Ctl.L2, Ctl.R1, Ctl.R2, Ctl.L3, Ctl.R3,
+        Ctl.BLAST1, Ctl.BLAST2, Ctl.ULTIMATE -> e.ctl?.let(::actionName) ?: ""
         else -> e.ctl?.let { faceLabel(config.skin, it) } ?: ""
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        updateSafeInsets()
+        rebuild()
+        handler.removeCallbacks(teamSizePoll)
+        if (!editing) {
+            Log.i("bt3", "touch roster: runtime overlay attached; starting team poll")
+            handler.post(teamSizePoll)
+        }
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         players.values.forEach { it.cancel() }
         handler.removeCallbacksAndMessages(null)
+        oneShotMask = 0
     }
 
     companion object {
