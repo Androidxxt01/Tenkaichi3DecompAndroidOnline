@@ -147,8 +147,14 @@
     <string name="touch_hint">Automático: somem assim que um controle físico é usado (o do Odin, um controle Bluetooth) e voltam quando você toca na tela.</string>
     <string name="opacity">Opacidade</string>
     <string name="performance">Desempenho</string>
-    <string name="fps60">Modo 60 FPS</string>
-    <string name="fps60_text">Em breve: o jogo roda a lógica a 30 quadros por segundo</string>
+    <string name="fps60">Movimento suave (60 FPS)</string>
+    <string name="fps60_text">O jogo calcula a luta 30 vezes por segundo, como no PS2; com isto são desenhadas imagens intermediárias (interpolação de quadros), para 60 ou 120 por segundo. A luta em si e o online não mudam. Custa cerca do dobro de GPU: para GPUs fortes. Experimental: em cortes de câmera não há imagem intermediária.</string>
+    <string name="off">Desligado</string>
+    <string name="aspect_screen">Tela</string>
+    <string name="aspect_hint">Tela: a proporção do próprio celular, para a luta ocupar a tela toda. Proporções largas mostram mais do cenário nas laterais (nada é esticado); os menus são feitos para 4:3 e ficam alargados.</string>
+    <string name="present_mode">Present mode</string>
+    <string name="present_auto">Automático</string>
+    <string name="present_mode_text">Como as imagens prontas chegam à tela. Automático: Mailbox onde o aparelho tiver. FIFO (VSync) espera a atualização da tela: sem tearing, um pouco mais de latência, ritmo mais estável em alguns aparelhos. Mailbox: sem tearing, sem espera. Immediate: menor latência, pode ter tearing. Vale na próxima vez que o jogo abrir.</string>
     <string name="appearance">Aparência do app</string>
     <string name="theme">Tema</string>
     <string name="theme_dark">Escuro</string>

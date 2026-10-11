@@ -747,9 +747,9 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         if (editing) drawToolbar(canvas)
     }
 
+    // DR_TOUCH_VISUAL_V42_FIXED: translucent DBZ-style touch artwork; input behavior unchanged.
     private fun drawEl(c: Canvas, e: El, k: Float, pressed: Boolean) {
         val ctl = e.ctl
-        val action = ctl?.let(::actionName)
         val accent = ctl?.let(::actionColor) ?: Color.rgb(80, 190, 240)
         val base = Color.rgb(12, 18, 31)
         val white = Color.rgb(238, 245, 255)
@@ -758,10 +758,10 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             CtlKind.BUTTON -> {
                 val button = ctl!!
                 val r = e.w / 2 * (if (pressed) 0.93f else 1f)
-                fill.color = a(if (pressed) Color.rgb(34, 58, 82) else base, k)
+                fill.color = a(if (pressed) Color.argb(92, Color.red(accent), Color.green(accent), Color.blue(accent)) else Color.argb(30, 10, 17, 31), k)
                 c.drawCircle(e.cx, e.cy, r, fill)
                 stroke.color = a(if (pressed) Color.WHITE else accent, k)
-                stroke.strokeWidth = (if (pressed) 3f else 2f) * dp
+                stroke.strokeWidth = (if (pressed) 2.2f else 1.35f) * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
                 if (navigationMode && button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
                     // In menus, show the actual confirm/cancel legend instead of combat-action artwork.
@@ -778,9 +778,11 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     }
                     label(c, menuLabel, e.cx, e.cy + r * 0.58f, r * 1.05f, a(white, k))
                 } else if (button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE, Ctl.L3, Ctl.R3, Ctl.BLAST1, Ctl.BLAST2, Ctl.ULTIMATE)) {
-                    drawActionGlyph(c, button, e.cx, e.cy - r * 0.12f, r * 0.34f, a(accent, k))
-                    label(c, action ?: "", e.cx, e.cy + r * 0.57f, r * 0.92f, a(white, k))
-                    drawControlBadge(c, button, e.cx + r * 0.64f, e.cy - r * 0.64f, r * 0.34f, k)
+                    stroke.color = a(Color.argb(70, 255, 248, 228), k)
+                    stroke.strokeWidth = 1f * dp
+                    c.drawCircle(e.cx, e.cy, r * 0.82f, stroke)
+                    drawActionGlyph(c, button, e.cx, e.cy, r * 0.47f, a(accent, k))
+                    drawControlBadge(c, button, e.cx + r * 0.69f, e.cy - r * 0.69f, r * 0.23f, k)
                 } else {
                     label(c, faceLabel(config.skin, button), e.cx, e.cy, r * 0.9f, a(white, k))
                 }
@@ -788,15 +790,14 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             CtlKind.SHOULDER -> {
                 rect.set(e.cx - e.w / 2, e.cy - e.h / 2, e.cx + e.w / 2, e.cy + e.h / 2)
                 val rr = e.h / 2
-                fill.color = a(if (pressed) Color.rgb(34, 58, 82) else base, k)
+                fill.color = a(if (pressed) Color.argb(92, Color.red(accent), Color.green(accent), Color.blue(accent)) else Color.argb(30, 10, 17, 31), k)
                 c.drawRoundRect(rect, rr, rr, fill)
                 stroke.color = a(if (pressed) Color.WHITE else accent, k)
-                stroke.strokeWidth = (if (pressed) 3f else 1.8f) * dp
+                stroke.strokeWidth = (if (pressed) 2.2f else 1.25f) * dp
                 c.drawRoundRect(rect, rr, rr, stroke)
                 if (ctl != null && ctl in listOf(Ctl.L1, Ctl.L2, Ctl.R1, Ctl.R2)) {
-                    drawActionGlyph(c, ctl, e.cx - e.w * 0.23f, e.cy, e.h * 0.22f, a(accent, k))
-                    label(c, action ?: "", e.cx + e.w * 0.07f, e.cy, e.w * 0.53f, a(white, k))
-                    drawControlBadge(c, ctl, e.cx + e.w * 0.39f, e.cy - e.h * 0.19f, e.h * 0.31f, k)
+                    drawActionGlyph(c, ctl, e.cx - e.w * 0.02f, e.cy, e.h * 0.34f, a(accent, k))
+                    drawControlBadge(c, ctl, e.cx + e.w * 0.39f, e.cy - e.h * 0.29f, e.h * 0.21f, k)
                 } else {
                     label(c, ctl?.let { faceLabel(config.skin, it) } ?: "", e.cx, e.cy, e.h * 0.85f, a(white, k))
                 }
@@ -804,47 +805,55 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             CtlKind.PILL -> {
                 rect.set(e.cx - e.w / 2, e.cy - e.h / 2, e.cx + e.w / 2, e.cy + e.h / 2)
                 val rr = e.h / 2
-                fill.color = a(if (pressed) Color.rgb(34, 58, 82) else base, k)
+                fill.color = a(if (pressed) Color.argb(92, Color.red(accent), Color.green(accent), Color.blue(accent)) else Color.argb(30, 10, 17, 31), k)
                 c.drawRoundRect(rect, rr, rr, fill)
-                stroke.color = a(if (pressed) Color.WHITE else Color.rgb(105, 139, 175), k)
+                stroke.color = a(if (pressed) Color.WHITE else Color.argb(170, 239, 231, 211), k)
                 c.drawRoundRect(rect, rr, rr, stroke)
                 val utilityLabel = when (ctl) {
                     Ctl.START -> if (navigationMode) "START" else "PAUSA"
                     Ctl.SELECT -> if (navigationMode) "VOLTAR" else "ZOOM"
                     else -> ""
                 }
-                label(c, utilityLabel, e.cx, e.cy, e.h * 0.85f, a(white, k))
+                drawUtilityGlyph(c, ctl ?: Ctl.START, e.cx, e.cy, e.h * 0.28f, a(white, k))
             }
             CtlKind.DPAD -> drawDpad(c, e, k)
             CtlKind.STICK_L, CtlKind.STICK_R -> {
                 val (sx, sy) = if (e.kind == CtlKind.STICK_L) lx to ly else rx to ry
                 val (ox, oy) = if (e.kind == CtlKind.STICK_L) (floatL ?: (e.cx to e.cy)) else (e.cx to e.cy)
-                fill.color = a(Color.rgb(9, 21, 38), k)
-                c.drawCircle(ox, oy, e.w / 2, fill)
-                stroke.color = a(Color.rgb(81, 189, 239), k)
-                stroke.strokeWidth = 2.2f * dp
-                c.drawCircle(ox, oy, e.w / 2, stroke)
-                stroke.strokeWidth = 1f * dp
-                stroke.color = a(Color.rgb(59, 119, 159), k)
-                c.drawCircle(ox, oy, e.w * 0.37f, stroke)
-                c.drawCircle(ox, oy, e.w * 0.22f, stroke)
-                // Four faint orientation ticks make the movement zone readable without looking like a d-pad.
-                for (i in 0..3) {
-                    val angle = i * (Math.PI / 2.0)
-                    val dx = kotlin.math.cos(angle).toFloat()
-                    val dy = kotlin.math.sin(angle).toFloat()
-                    c.drawLine(ox + dx * e.w * 0.40f, oy + dy * e.w * 0.40f,
-                        ox + dx * e.w * 0.46f, oy + dy * e.w * 0.46f, stroke)
+                val r = e.w / 2f
+                // Transparent martial-arts HUD: directional marks and a compact thumb cap.
+                fill.color = a(Color.argb(30, 10, 16, 30), k)
+                c.drawCircle(ox, oy, r, fill)
+                stroke.color = a(Color.argb(190, 238, 229, 207), k * 0.82f)
+                stroke.strokeWidth = max(1.15f * dp, r * 0.018f)
+                c.drawCircle(ox, oy, r, stroke)
+                stroke.color = a(Color.argb(86, 250, 245, 226), k)
+                stroke.strokeWidth = max(0.8f * dp, r * 0.012f)
+                c.drawCircle(ox, oy, r * 0.72f, stroke)
+                // Four subtle directional arrowheads around the ring (Shadow-Fight-inspired, DBZ palette).
+                fill.color = a(Color.argb(190, 239, 231, 211), k * 0.85f)
+                val mark = r * 0.105f
+                fun arrow(dx: Float, dy: Float) {
+                    val ax = ox + dx * r * 0.80f
+                    val ay = oy + dy * r * 0.80f
+                    path.reset()
+                    path.moveTo(ax + dx * mark, ay + dy * mark)
+                    path.lineTo(ax - dx * mark * 0.72f - dy * mark * 0.72f, ay - dy * mark * 0.72f + dx * mark * 0.72f)
+                    path.lineTo(ax - dx * mark * 0.72f + dy * mark * 0.72f, ay - dy * mark * 0.72f - dx * mark * 0.72f)
+                    path.close()
+                    c.drawPath(path, fill)
                 }
-                val kx = ox + (sx - 128) / 127f * e.w * 0.40f
-                val ky = oy + (sy - 128) / 127f * e.w * 0.40f
-                fill.color = a(if (sx != 128 || sy != 128) Color.rgb(115, 220, 255) else Color.rgb(52, 91, 124), k)
-                c.drawCircle(kx, ky, e.w * 0.24f, fill)
-                stroke.color = a(white, k)
-                stroke.strokeWidth = 1.6f * dp
-                c.drawCircle(kx, ky, e.w * 0.24f, stroke)
-                fill.color = a(Color.rgb(235, 249, 255), k)
-                c.drawCircle(kx - e.w * 0.055f, ky - e.w * 0.055f, e.w * 0.055f, fill)
+                arrow(0f, -1f); arrow(1f, 0f); arrow(0f, 1f); arrow(-1f, 0f)
+                val kx = ox + (sx - 128) / 127f * e.w * 0.30f
+                val ky = oy + (sy - 128) / 127f * e.w * 0.30f
+                val active = sx != 128 || sy != 128
+                fill.color = a(Color.argb(if (active) 150 else 112, 245, 235, 213), k)
+                c.drawCircle(kx, ky, e.w * 0.185f, fill)
+                stroke.color = a(if (active) Color.rgb(255, 207, 116) else Color.argb(195, 255, 250, 232), k)
+                stroke.strokeWidth = max(1.1f * dp, e.w * 0.012f)
+                c.drawCircle(kx, ky, e.w * 0.185f, stroke)
+                fill.color = a(Color.argb(110, 255, 255, 245), k)
+                c.drawCircle(kx, ky, e.w * 0.075f, fill)
             }
             CtlKind.SYSTEM -> {
                 val r = e.w / 2
@@ -853,12 +862,15 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     Ctl.TEAM_SWAP -> Color.rgb(64, 204, 170)
                     else -> Color.rgb(105, 139, 175)
                 }
-                fill.color = a(if (pressed) Color.rgb(34, 48, 69) else base, k)
+                fill.color = a(if (pressed) Color.argb(82, 255, 197, 105) else Color.argb(28, 10, 16, 30), k)
                 c.drawCircle(e.cx, e.cy, r, fill)
                 val navActive = ctl == Ctl.NAV_MODE && navigationMode
                 stroke.color = a(if (navActive) Color.rgb(255, 176, 52) else accent, k)
                 stroke.strokeWidth = if (navActive || pressed) 3f * dp else 2f * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
+                stroke.color = a(Color.argb(58, 255, 248, 229), k)
+                stroke.strokeWidth = 1f * dp
+                c.drawCircle(e.cx, e.cy, r * 0.82f, stroke)
                 stroke.strokeWidth = 2f * dp
                 fill.color = a(white, k)
                 if (ctl == Ctl.MENU) {
@@ -909,7 +921,6 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     path.close()
                     fill.color = a(white, k)
                     c.drawPath(path, fill)
-                    label(c, "PRÓX", e.cx, e.cy + r * 1.42f, r * 1.8f, a(white, k))
                 } else if (ctl == Ctl.TEAM_SWAP) {
                     // Two opposing arrows mean switch to the selected team member.
                     stroke.color = a(white, k)
@@ -924,20 +935,19 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 - r * 0.17f, stroke)
                     c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 + r * 0.17f, stroke)
                     stroke.strokeCap = Paint.Cap.BUTT
-                    label(c, "TROCAR", e.cx, e.cy + r * 1.42f, r * 2.15f, a(white, k))
                 } else {
                     for (i in -1..1) c.drawCircle(e.cx + i * r * 0.42f, e.cy, r * 0.12f, fill)
                 }
             }
             CtlKind.MACRO -> {
                 val r = e.w / 2 * (if (pressed) 0.93f else 1f)
-                fill.color = a(if (pressed) Color.rgb(255, 198, 75) else base, k)
+                fill.color = a(if (pressed) Color.argb(110, 255, 198, 75) else Color.argb(30, 10, 16, 30), k)
                 c.drawCircle(e.cx, e.cy, r, fill)
                 stroke.color = a(Color.rgb(255, 183, 70), k)
-                stroke.strokeWidth = 2.5f * dp
+                stroke.strokeWidth = 1.6f * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
                 drawActionGlyph(c, Ctl.TRIANGLE, e.cx, e.cy - r * 0.12f, r * 0.34f, a(Color.rgb(255, 198, 75), k))
-                label(c, e.macro?.name?.take(5) ?: "MACRO", e.cx, e.cy + r * 0.55f, r * 0.9f, a(white, k))
+                if (editing) label(c, e.macro?.name?.take(5) ?: "MACRO", e.cx, e.cy + r * 0.55f, r * 0.9f, a(white, k))
             }
         }
     }
@@ -977,16 +987,45 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         else -> Color.rgb(105, 139, 175)
     }
 
+    private fun drawUtilityGlyph(c: Canvas, ctl: Ctl, x: Float, y: Float, r: Float, color: Int) {
+        val oldWidth = stroke.strokeWidth
+        val oldCap = stroke.strokeCap
+        val oldJoin = stroke.strokeJoin
+        stroke.color = color
+        stroke.strokeWidth = max(1.5f * dp, r * 0.13f)
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeJoin = Paint.Join.ROUND
+        if (ctl == Ctl.START) {
+            path.reset()
+            path.moveTo(x - r * 0.48f, y - r * 0.68f)
+            path.lineTo(x + r * 0.65f, y)
+            path.lineTo(x - r * 0.48f, y + r * 0.68f)
+            path.close()
+            c.drawPath(path, stroke)
+        } else {
+            c.drawLine(x - r * 0.62f, y - r * 0.48f, x + r * 0.62f, y - r * 0.48f, stroke)
+            c.drawLine(x - r * 0.62f, y, x + r * 0.62f, y, stroke)
+            c.drawLine(x - r * 0.62f, y + r * 0.48f, x + r * 0.62f, y + r * 0.48f, stroke)
+            fill.color = color
+            c.drawCircle(x - r * 0.18f, y - r * 0.48f, r * 0.13f, fill)
+            c.drawCircle(x + r * 0.25f, y, r * 0.13f, fill)
+            c.drawCircle(x - r * 0.05f, y + r * 0.48f, r * 0.13f, fill)
+        }
+        stroke.strokeWidth = oldWidth
+        stroke.strokeCap = oldCap
+        stroke.strokeJoin = oldJoin
+    }
+
     private fun drawControlBadge(c: Canvas, ctl: Ctl, x: Float, y: Float, r: Float, k: Float) {
         val sticker = when (ctl) {
             Ctl.BLAST1 -> Ctl.CIRCLE
             Ctl.BLAST2, Ctl.ULTIMATE -> Ctl.TRIANGLE
             else -> ctl
         }
-        fill.color = a(Color.rgb(22, 31, 48), k)
+        fill.color = a(Color.argb(58, 10, 17, 31), k)
         c.drawCircle(x, y, r, fill)
         stroke.color = a(actionColor(ctl), k)
-        stroke.strokeWidth = max(1.2f * dp, r * 0.13f)
+        stroke.strokeWidth = max(1.0f * dp, r * 0.10f)
         c.drawCircle(x, y, r, stroke)
         if (config.skin == PadSkin.PLAYSTATION && sticker in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
             psSymbol(c, sticker, x, y, r * 0.43f, a(Color.WHITE, k))
@@ -1128,11 +1167,12 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     private fun drawDpad(c: Canvas, e: El, k: Float) {
         val s = e.w / 2
         val arm = s * 0.36f
+        stroke.strokeWidth = 1.15f * dp
         fun seg(bit: Int, l: Float, t: Float, r: Float, b: Float) {
             rect.set(e.cx + l, e.cy + t, e.cx + r, e.cy + b)
-            fill.color = a(if (dpadBits and bit != 0) Color.rgb(81, 196, 255) else Color.rgb(12, 18, 31), k)
+            fill.color = a(if (dpadBits and bit != 0) Color.argb(115, 255, 194, 99) else Color.argb(28, 10, 16, 30), k)
             c.drawRoundRect(rect, arm * 0.35f, arm * 0.35f, fill)
-            stroke.color = a(Color.rgb(105, 139, 175), k)
+            stroke.color = a(Color.argb(160, 239, 231, 211), k)
             c.drawRoundRect(rect, arm * 0.35f, arm * 0.35f, stroke)
         }
         seg(Ps2.UP, -arm, -s, arm, -arm * 0.6f)
@@ -1140,7 +1180,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         seg(Ps2.LEFT, -s, -arm, -arm * 0.6f, arm)
         seg(Ps2.RIGHT, arm * 0.6f, -arm, s, arm)
         // arrows
-        fill.color = a(Color.rgb(238, 245, 255), k)
+        fill.color = a(Color.argb(220, 246, 239, 220), k)
         val t = arm * 0.45f
         fun tri(x: Float, y: Float, dx: Float, dy: Float) {
             path.reset()

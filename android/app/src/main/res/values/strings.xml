@@ -148,8 +148,14 @@
     <string name="touch_hint">Automatic: they hide as soon as a physical controller is used (the Odin\'s own, a Bluetooth pad) and come back when you touch the screen.</string>
     <string name="opacity">Opacity</string>
     <string name="performance">Performance</string>
-    <string name="fps60">60 FPS mode</string>
-    <string name="fps60_text">Coming later: the game runs its logic at 30 frames per second</string>
+    <string name="fps60">Smooth motion (60 FPS)</string>
+    <string name="fps60_text">The game computes a fight 30 times a second, as on the PS2; with this, pictures are drawn in between (frame interpolation), for 60 or 120 a second. The fight itself and online play are unchanged. It costs about twice the GPU work: for strong GPUs. Experimental: pictures are left out at camera cuts.</string>
+    <string name="off">Off</string>
+    <string name="aspect_screen">Screen</string>
+    <string name="aspect_hint">Screen: the phone\'s own shape, so the fight fills it. Wide shapes show more of the scene to the sides (nothing is stretched); the menus are drawn for 4:3 and are widened.</string>
+    <string name="present_mode">Present mode</string>
+    <string name="present_auto">Automatic</string>
+    <string name="present_mode_text">How finished pictures reach the screen. Automatic: Mailbox where the device has it. FIFO (VSync) waits for the screen\'s refresh: no tearing, a little more latency, steadier pacing on some devices. Mailbox: no tearing, no wait. Immediate: lowest latency, may tear. Used the next time the game starts.</string>
     <string name="appearance">App appearance</string>
     <string name="theme">Theme</string>
     <string name="theme_dark">Dark</string>

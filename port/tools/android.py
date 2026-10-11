@@ -270,6 +270,7 @@ def link():
         print("  " + l[-200:])
     if r.returncode:
         return False
+    state_list(EXE)  # (from this link's map, before the second link writes its own)
     # the same program linked RELOC_DELTA higher: the words that differ by exactly that are the program's own
     # addresses, which the loader moves when the program cannot be loaded at BASE (relocations())
     alt = OUT / "libbt3.alt.so"
@@ -282,6 +283,57 @@ def link():
     alt.unlink()
     finish()
     return True
+
+
+# The game's own variables in the program, for saving and restoring its state (online play, gs/state.c): what
+# make_state.py writes from a GNU map for the PC, here from lld's. The same rule for what counts as the game's
+# (everything but the port's renderer, sound, input and UI files and some of its pc_* files); read-only data left
+# out (.data.rel.ro is made read-only by the loader after the move). Addresses as linked (BASE): the engine adds
+# the move (BT3_ENGINE_BIAS).
+STATE_PORT = {"headless", "mathf_pc", "plat_file", "plat_libm", "plat_mc", "plat_mem", "plat_sndstate", "plat_stub", "plat_sys", "softfloat_ps2",
+              "vu0_a", "vu0_b", "gs_marker"}
+STATE_WRITABLE = (".data", ".bss", ".sdata", ".sbss", ".tbss", ".tdata")
+
+
+def state_list(exe):
+    def is_game(path):
+        p = pathlib.Path(path.split("(")[0])
+        if p.parent == DATA:
+            return True
+        if p.parent != OBJ or p.name.startswith(("gs_", "cxx_", "ui", "imgui")):
+            return False
+        if p.name.startswith("pc_"):
+            return p.stem[3:] in STATE_PORT
+        return True
+
+    ranges, others, out = [], [], None
+    line_re = re.compile(r"^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+) (.*)$")
+    for l in pathlib.Path(str(exe) + ".map").read_text(errors="replace").splitlines():
+        m = line_re.match(l)
+        if not m:
+            continue
+        rest = m.group(5)
+        level = len(rest) - len(rest.lstrip(" "))
+        name = rest.strip()
+        if level == 0:
+            out = name  # an output section
+            continue
+        if level != 8 or out is None or not out.startswith(STATE_WRITABLE) or out.startswith(".data.rel.ro"):
+            continue
+        addr, size = int(m.group(1), 16), int(m.group(3), 16)
+        if not size or ":(" not in name:
+            continue
+        (ranges if is_game(name.rsplit(":(", 1)[0]) else others).append((addr, addr + size))
+    ranges.sort()
+    others.sort()
+    merged = []
+    for a, b in ranges:  # joined over alignment gaps, never over the port's own variables (make_state.py)
+        if merged and a <= merged[-1][1] + 64 and not any(x < a and y > merged[-1][1] for x, y in others):
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    pathlib.Path(str(exe) + ".mem").write_text("".join(f"{a:x} {b - a:x}\n" for a, b in merged))
+    print(f"state list: {len(merged)} ranges of game variables, {sum(b - a for a, b in merged):,} bytes -> {exe.name}.mem")
 
 
 RELOC_DELTA = 0x10000000
@@ -494,6 +546,8 @@ def install():
         shutil.copy(str(EXE) + ".dat", assets / "libbt3.so.dat")
     if pathlib.Path(str(EXE) + ".rel").exists():
         shutil.copy(str(EXE) + ".rel", assets / "libbt3.so.rel")
+    if pathlib.Path(str(EXE) + ".mem").exists():
+        shutil.copy(str(EXE) + ".mem", assets / "libbt3.so.mem")
     java = SDL3 / "java/org"
     if java.exists():
         shutil.copytree(java, APP / "java/org", dirs_exist_ok=True)

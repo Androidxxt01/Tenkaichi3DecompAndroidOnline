@@ -10,13 +10,14 @@ typedef struct PortVideo {
     int scale4;      /* internal resolution multiplier in quarters: 4 = 1x .. 32 = 8x */
     int aspectMilli; /* width / height of the picture * 1000 */
     int fullscreen;
-    int fxOff;       /* bits: 1 outline, 2 see-through tint, 4 depth tint, 8 glare and glow, 16 distance blur */
+    int fxOff;       /* bits: 1 outline, 2 see-through tint, 4 depth tint, 8 glare and glow, 16 distance blur, 32 movement blur */
     int glow;        /* percent */
     int music, effects; /* volumes, percent */
     int display;     /* 0 = the desktop chooses, n = the n-th display; used at the next start */
     int texPack;     /* 1 = the texture pack's replacements are used */
     int texPackCount; /* read only: replacement textures found in the textures folder */
     int filter;      /* the picture onto the screen: 0 bilinear, 1 sharp bilinear, 2 FXAA, 3 FSR 1, 4 Snapdragon GSR */
+    int smooth2d;    /* "2D filtering": 0 sharp (a PS2 pixel is a block), 1 smooth (sampled per output pixel) */
 } PortVideo;
 
 /* gs_draw.c */
@@ -38,9 +39,12 @@ const char *PortInput_ActionLabel(int action);
 int *PortInput_Keys(int player);       /* [PORT_ACTIONS] SDL scancodes, 0 = none */
 int *PortInput_PadButtons(int player); /* [PORT_PAD_BUTTONS] controller source, -1 = none */
 int *PortInput_PadSlot(int player);    /* which connected controller: -1 none, 0 = first, ... */
+int *PortInput_OverlayKey(void);       /* the key that opens and closes the settings window (scancode, 0 = none) */
+int *PortInput_OverlayPad(void);       /* the controller button that does (-1 = none; START + SELECT always do) */
+int PortInput_Hotkey(const SDL_Event *ev); /* 1 = the event opens or closes the settings window */
 void PortInput_ResetDefaults(int player);
 void PortInput_Save(void);
-extern int gPortOverlayOpen;   /* the settings window is open: the keyboard does not reach the game */
+extern int gPortOverlayOpen;   /* the settings window is open: neither keyboard nor controller reaches the game */
 extern int gPortInputCapture;  /* it is waiting for a key or button to bind: nothing reaches the game */
 
 /* ui.cpp */

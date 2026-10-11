@@ -703,9 +703,14 @@ with a third of the interpreter's work gone.
   and is off by about +-24 in bands in the middle (either the reference's 16-bit view of the depth page is not
   exact, or the console really bands; not settled). On the test stage the tint makes no visible difference
   (compared on / off), so this stage does not prove it either way.
+- 32 of `BT3_FX_OFF` / `fx_off` ("Movement blur" in the settings window, 2026-10-10): the game's blur of the scenery
+  while the view turns (StgPanBlur, src/sys/gfxm_a.c). Left out where the game draws it (`Port_FxOff(32)` in
+  `StgPanBlur_Draw`: the views are still kept up to date), not in the renderer: it is several passes through work
+  buffers. Checked without a window: with it off the scenery of a turning view is sharp, and the fight is the same.
 - Switches: `BT3_FX_OFF=<mask>` or F1..F4 while running: 1 outline, 2 see-through tint, 4 depth tint, 8 glow
   (glare and object glow: reserved, the glow pass itself is not written yet).
-- Still dropped: the glow pass (shrink, blur, add), pan blur, haze, stage blur, water wobble, lens, cross-fade.
+- Still dropped: the glow pass (shrink, blur, add), pan blur, haze, stage blur, water wobble, lens. (The cross-fade
+  is drawn since 2026-10-10: the game's read-back of the frame is answered, see docs/known_bugs.md.)
 - **Buffer-to-buffer passes are drawn** (glare, object glow, blur of distant things; `draw_state` in gs_gpu.c):
   textured sprites from one render target into another, with sampling held inside the buffer's own area (the GS
   CLAMP register done by hand, since each buffer is a corner of a larger texture). Not drawable and dropped: a
@@ -736,6 +741,14 @@ with a third of the interpreter's work gone.
   at its own centre, a quarter or three quarters of a texel past where the GS samples, which at a sprite's edge
   is the neighbouring picture. 2D sprites now take the coordinate at the whole GS pixel (gs.frag, misc.w), so
   2D art looks as on the console (2x point-scaled), not sharper. Not yet confirmed by the user.
+  **Since 2026-10-10 this is the setting "2D filtering"** (F1, `smooth_2d`, `BT3_2D_SMOOTH=0/1`): "Sharp
+  (console)" is the above; "Smooth", the default, samples the game's own 2D art at every output pixel, held inside
+  the piece's rectangle of its sheet by the middles of its edge texels (the rectangle worked out for a texture
+  pack's replacement, gs_draw.c; the rule in gs.frag is its own: the plain coordinate). The replacement's rule,
+  tried first, picks one of two formulas per pixel by a derivative and flickered on art near one texel a pixel:
+  comb stripes in small print at 6x, which the user saw as blurred text, a line in a letter, a pop-up cut short
+  and tearing on moving pieces. Seen by the user: the fight's display, the title, the main menu. Not seen by
+  anyone: every other screen.
 
 ## 2026-10-06: repository rule, widescreen
 
@@ -1363,3 +1376,81 @@ Windows program through the session on Vulkan under Wine (fight values as always
 Not done, in the order of what is left in the profile (Vulkan): the per-pixel loop that writes an uploaded
 texture into GS memory (`Gs_Gif`, 7%); `draw_state` (4%); `feclearexcept` in libm, 2%, caller not found; the copy
 of the vertices into the transfer buffer could be saved by recording straight into it.
+
+## Is the data the original disc's? (2026-10-10)
+
+- Why: a report of a broken skeleton turned out to come from a modified disc image (a romhack), which nothing on
+  the screen said. The installer checks the two programs only; modified DATA installs and runs.
+- `port/src/plat_verify.c`: at start a background thread compares every data file (the three archives' 68,601
+  entries and the four streams of DATA/) with `port/src/plat_verify_tab.h` (size and CRC-32 of the original's,
+  made by `port/tools/make_verify.py <disc image>`; checksums only). A file in `<root>/mods/` counts as replaced.
+  When something differs: a log line with the numbers and the first four names, the window title becomes
+  `Tenkaichi3Decomp [modified game data]`, the notice line is shown once, and a crash report carries the line.
+- The result is kept in `<root>/.verified` with a signature of every file's size and time; a later start only
+  looks at those. Measured here: under 4 s for the full pass (files in the system's cache), under 1 s after.
+- A quick pass first: sizes only, no reading. A replaced, missing or resized file is reported at once ("at least
+  N files") and nothing is read; a romhack's data stopped the game in its first seconds, before the full pass
+  would have ended. A crash report written while the check runs says "not checked yet".
+- Texture packs, added songs, stages and characters are outside the data folder and do not count.
+- `BT3_VERIFY=0` turns it off; without a window (`BT3_GS=none`) it runs only with `BT3_VERIFY=1`.
+- Checked: the original data (clean); a copy with one byte changed in a file, another file longer and a third
+  missing (3 of 68,605 named, both on the full pass and from the cache); the replay check unchanged. NOT seen:
+  the title and the notice on a real window (screenshots of the offscreen renderer are taken under the overlay).
+
+## In-between pictures: a shiny model's reflection flickered (2026-10-11)
+
+- Seen by the user on characters with a reflection (Perfect Cell's black parts) with "interp" on; reproduced from
+  a pad recording in the offscreen renderer, pictures written one by one (`BT3_SHOT=1`).
+- The reflection is program 1's layer 1 (`misc.w == 5`), drawn over the same triangles as layer 0. In
+  `interp_build` layers 0 and 1 got `interp_bone` (axes given back their length, the place moved around the
+  camera) and every other layer the plain average of the matrices, so in the in-between pictures the reflection's
+  triangles were not where the layer under them was: depth fighting, the shine there in one picture and gone or
+  in shreds in the next. Layer 5 goes through `interp_bone` now.
+- Checked: the same six consecutive pictures before and after; after, the shine is whole and the same in each.
+
+## Texture packs: broken letters and logos, text that tears while it moves (2026-10-11)
+
+Reported by a player on 0.1.22 with a pack: "some things are pixelated". Seen with the 18,704-file pack: the
+publishers' logos had steps along their edges, the copyright text had letters with columns missing ("righ:s",
+"SH.JEISHA"), and the main menu's entries tore while they glided. Without the pack the same screens were clean.
+Two faults of the rule a replacement is sampled by as 2D art (gs.frag, mode 3):
+
+- **The texel was chosen on its boundary.** The rule takes the original texel the GS pixel shows (`floor(at *
+  size)`) and shows the matching part of the replacement. Where a piece has whole-texel coordinates, `at` lies ON
+  the boundary between two texels, and its rounding chose one side or the other from pixel to pixel. Now a 64th of
+  a texel in the piece's direction decides, as where the piece's rectangle is worked out (GsGpu_Draw).
+- **The picture was held to the GS's pixel grid.** A piece that glides by parts of a GS pixel (the main menu's
+  entries) moved smoothly as geometry while each letter's picture stepped a whole GS pixel at another moment. A
+  replacement now takes the rule of the game's own smooth 2D art: the plain coordinate of each output pixel, held
+  inside the piece's rectangle of its sheet. This does not depend on the setting "2D filtering": sharp means the
+  game's own art as blocks of a GS pixel, which a replacement of several texels per GS pixel is not.
+  `BT3_TEX_GRID=1` gives the grid rule back, to compare.
+
+Checked: frames of the boot and the main menu with the pack, before and after, smooth and sharp, beside the
+frames without the pack (windowless, the processor's own Radeon, Vulkan); the recorded fight ends as before. The
+user saw on screen: the logos, the copyright text and the menu's motion right in both settings, the fight's HUD
+unchanged in sharp. Not checked: widescreen with a pack; the OpenGL renderer with a pack.
+
+## The settings window opens from a controller (2026-10-11)
+
+Asked for by the user. Until now only F1 opened the settings window, and with it open only the keyboard was kept
+from the game.
+
+- **START + SELECT** of any connected controller opens and closes it (the controller's own two buttons, whatever
+  the game's bindings are). `PortInput_Hotkey` (gs_input.c) decides for both renderers' event loops.
+- **A row "Open this window"** heads the Controls list: a key (F1) and a controller button (none) of the settings
+  file (`key_overlay`, `pad_overlay`). A cleared key is F1 again, so a keyboard always has a way in; a trigger
+  is not taken as the button. START + SELECT works beside a bound button.
+- **The window is worked with the controller** (Dear ImGui's gamepad navigation), and **nothing of a controller
+  reaches the game while it is open**, as with the keyboard. The buttons that opened or closed it do not reach
+  the game until they are let go (START would pause).
+- **Found by the user: pressed in the same moment, the two did nothing.** Both "down" events come in one round and
+  each already finds the other button held, so the window opened and closed again at once; only "hold one, press
+  the other" worked. The pair counts once per press now (a latch, cleared when either is let go).
+
+Known: START pressed a moment before SELECT reaches the game first (a pause in a fight). With the controller,
+Cross on a binding starts waiting for a button and the next press is taken; Esc on the keyboard leaves it as it
+was, and there is no way back from the controller yet (the user bound SELECT alone this way without meaning to).
+
+Checked by the user on screen (Linux): START + SELECT opens and closes it, pressed together. Not checked by
+anyone: Windows; a second controller; the online screen with a controller.

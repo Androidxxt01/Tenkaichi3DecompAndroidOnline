@@ -163,11 +163,36 @@ class GameActivity : SDLActivity() {
         return super.dispatchGenericMotionEvent(ev)
     }
 
+    /**
+     * HTTPS for the engine's online play (port/src/gs/net_match.c, through JNI on the engine's own thread): a POST of
+     * [body] (JSON) to [url], the answer's text, or "" when there was none. Only the matchmaking service is asked this
+     * way (a room code and the addresses the two games can reach each other at; no game data).
+     */
+    @Suppress("unused")
+    fun netPost(url: String, body: String): String = runCatching {
+        val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 8_000
+            readTimeout = 12_000
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("User-Agent", "DragonRage-Android")
+        }
+        try {
+            c.outputStream.use { it.write(body.toByteArray()) }
+            val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream
+            stream?.bufferedReader()?.use { it.readText() } ?: ""
+        } finally {
+            c.disconnect()
+        }
+    }.getOrDefault("")
+
     /** The list of where the game's data tables come from (made with the engine, android.py) next to the game's files. */
     private fun installDataList() {
         // the list of the game's data tables (libbt3.so.dat) and of the engine's own addresses (libbt3.so.rel, for
         // loading it elsewhere than its usual place), both made with the engine (android.py), next to the game's files
-        for (name in listOf("libbt3.so.dat", "libbt3.so.rel")) {
+        // and of the game's own variables (libbt3.so.mem: what a saved state holds, for online play)
+        for (name in listOf("libbt3.so.dat", "libbt3.so.rel", "libbt3.so.mem")) {
             val out = File(paths.root, name)
             runCatching {
                 assets.open(name).use { input ->

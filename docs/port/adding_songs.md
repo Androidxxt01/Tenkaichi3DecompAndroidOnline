@@ -52,6 +52,25 @@ or shipped; the letters exist while the program runs, made from the player's own
 
 ---
 
+## Team battles, and playing round (2026-10-10)
+
+Two reports, both true:
+
+- **Added songs were missing in team and DP battles.** The team select (src/menu/menu_e_b.c) builds its own music
+  list, and only the duel's select (menu_c_e.c) had been given the added songs. It has them now, the same way:
+  appended after the disc's and before "random", their own file numbers for the preview (`PORT_BGM_FILE`), their
+  names drawn by the port or, without the overlay, in the game's plain font.
+- **An added song played once and then the fight was silent.** The port plays a track round only if the ADX file
+  has loop points (the disc's music has them: flag at 0x24, start and end samples at 0x28 and 0x30). A file made
+  from an mp3 has none. Such a file is now played again from its start, when it is the file of an added song
+  (`PortSongs_IsFile`, port/src/gs/snd_adx.c `start`); the game is told it never ends, as for the disc's music. A
+  file that has loop points of its own keeps them.
+
+Checked: a 2.7-second file without loop points, installed as a song and forced as a fight's music
+(`BT3_TEST_BGM=26`, a dummy sound device): it is started once as a looping track and not again in a minute's
+fight; the replay check is unchanged. NOT seen: the team select's music list with added songs in it (no recorded
+session reaches that screen).
+
 ## Quick start (script)
 
 From the repository root:
@@ -157,7 +176,7 @@ That already works through the mods mechanism: just put the ADX at `gamedata/mod
 
 ## Limits and notes
 
-- **6 added songs** at most (offsets `0x1A..0x1F`; `bgmBits` is a u32).
+- **40 added songs** at most (see the end of this file; it was 6).
 - The audio is converted to **ADX** (ffmpeg `adpcm_adx`). The game plays it with its ADX decoder; other
   formats make no sound.
 - The music list is a **reel**: the added ones appear before Random.
@@ -177,3 +196,20 @@ At start-up the port logs how many songs it read:
 bt3: songs: 1 added track(s) from gamedata/songs/songs.txt
 bt3: song-name overlay: 1 names, 1024x64 each
 ```
+
+## The added songs' file numbers were disc files; 40 songs (2026-10-08)
+
+An added song was played as file 0x10B16 + its list entry, entries 0x1A..0x1F. Those are disc files: 0x10B30 to
+0x10B33 are silent files of 30,720 bytes, but 0x10B34 and 0x10B35 are the first two lines of the announcer
+(`HudNotice_GetVoiceBase`, the voice set used when `SAVE_FLAG_VOICE` is clear). With five or six songs added,
+those two lines were answered with the songs (releases 0.1.8 to 0.1.11).
+
+- Now an added song's file is 0xD48 + 73000 + n, past the end of the second archive (`PORT_BGM_FILE` in
+  port/include/plat_songs.h; used where the fight and the duel's music select play an entry).
+- The limit was 6 "because the save's music bits are one 32-bit word". An added song is never looked up there
+  (the unlocks are applied to the disc's list before the added ones are appended), and the entry is an s32
+  everywhere it is kept. The limit is 40: the list the menu is given has 72 places.
+- `BT3_TEST_BGM=<entry>`: every battle plays that entry (0x1A is the first added song).
+- Checked with 45 files in the folder: 40 are taken (the rest named in the log), the music select's list has 61
+  entries with "random" last, and a fight set to entries 0x1A, 0x1E, 0x1F and 0x41 opens the 1st, 5th, 6th and 40th
+  file; a disc entry opens none of them. Not checked: the forty names on screen, and scrolling the list by hand.

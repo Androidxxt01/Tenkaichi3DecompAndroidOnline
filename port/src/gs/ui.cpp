@@ -1,4 +1,5 @@
-// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it.
+// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it, or START + SELECT
+// of a controller, or the key and button of its Controls list (gs_input.c: PortInput_Hotkey).
 // Everything it shows lives elsewhere (ui.h): the renderer's settings in gs_gpu.c, the bindings in gs_input.c.
 // It runs on the render thread, which owns the window and its events.
 #include <math.h>
@@ -21,6 +22,12 @@ static int sGL; // 1: the OpenGL back end draws the window (ImGui's OpenGL3 back
 extern "C" {
 extern volatile int gPortNetMenuRequest;
 void Port_NetOptions(int rollback, int delay); // gs/net.c
+void Port_NetRulesSet(int type, int dp, int time); // gs/net.c: the host's battle type, DP limit row, time limit
+void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
+const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
+int Port_HudSwap(void);                        // the two sides of the HUD are in each other's places on this copy
+int Port_NetActive(void);
+void *BtlChar_FindByObjId(int objId);          // the game: the fighter of a side, NULL outside a fight
 int Port_NetStats(int *out);                   // gs/net.c: the meter's numbers of an online match
 int Port_LobbyOther(void);
 extern unsigned gPortLiveBlanks;               // plat_stub.c: vertical blanks the game has gone through
@@ -36,8 +43,17 @@ const char *PortSongs_Name(int index);
 int PortSongs_Count(void);
 int Port_Setting(const char *name, int def);   // plat_settings.c
 void Port_SettingSave(const char *name, int value);
+int Port_ClashSquare(void);                    // gs_input.c: Square counts as a direction in clashes
+void Port_ClashSquareSet(int on);
+int Port_ClashSquareX(void);                   // what a press is worth, in quarters of a point (4, 6, 7, 8)
+void Port_ClashSquareXSet(int quarters);
+extern int gsInterp;                           // gs_draw.c: in-between pictures on (1) / off (0); -1 before the first frame
 void Port_SettingsWrite(void);
 int Port_LobbyStart(int host, const char *address, int port); // gs/net.c
+int Port_LobbyStartCode(int host, const char *code);         // the same with a room code (the matchmaking service)
+const char *Port_LobbyCode(void);                            // the host's room code, "" until it is known
+const char *Port_LobbyError(void);                           // why the matchmaking failed (state -3)
+int Port_LobbyRelayed(void);                                 // the other player was reached through the relay
 int Port_LobbyPoll(void);
 void Port_LobbyCancel(void);
 void Port_LobbyLaunch(void);
@@ -226,7 +242,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL; // no window-layout file next to the game
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad; // (a controller opens it too: START + SELECT)
     style();
 #ifdef __ANDROID__
     // a phone's or a handheld's dense screen, touched or driven with the controller: everything larger, and the
@@ -303,7 +319,10 @@ static void net_open(void) {
 
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
-    static int tab, roll = -1, delay = 1;
+    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3;
+    static bool useCode = true;       // host with a room code (no port forwarding) or on a port
+    static char roomCode[8] = "";     // the code to join with
+    static int lastState = 0;         // what the lobby said last (for its messages after a failure)
     ImGuiIO &io = ImGui::GetIO();
     bool open = true;
 
@@ -319,8 +338,14 @@ static void build_net(void) {
             if (ImGui::BeginTabItem("Host")) {
                 static const char *const kRoll[] = {"Off (wait for each other)", "Up to 2 frames", "Up to 4 frames", "Up to 6 frames", "Up to 8 frames"};
                 tab = 0;
+                ImGui::Checkbox("Use a room code (no port forwarding needed)", &useCode);
+                ImGui::SetItemTooltip("You get a short code to tell the other player, and the two games find each other through a\n"
+                                      "small matchmaking service. Works with most home routers. Without it you host on a port,\n"
+                                      "which must be reachable from the other player (port forwarding or a virtual network).");
+                ImGui::BeginDisabled(useCode);
                 ImGui::SetNextItemWidth(120.0f);
                 ImGui::InputText("Port", port, sizeof(port), ImGuiInputTextFlags_CharsDecimal);
+                ImGui::EndDisabled();
                 if (roll < 0) { // the choices of last time (new names: the first ones' defaults were 4 frames and delay 1)
                     roll = Port_RollCan() ? Port_Setting("net_rollback2", 8) / 2 : 0;
                     delay = Port_Setting("net_delay2", -1) + 1; // 0 = automatic, else the delay + 1
@@ -347,15 +372,36 @@ static void build_net(void) {
                                       "has to guess too far ahead and stutters. Automatic measures the connection when the match\n"
                                       "starts: 1 frame on a good one, more on a slow one.");
                 }
+                {
+                    // The match's rules: the game's own versus menu is not shown online, so they are chosen here.
+                    static const char *const kBattle[] = {"Single battle", "Team battle", "DP battle (10 DP)", "DP battle (15 DP)", "DP battle (20 DP)"};
+                    static const char *const kTime[] = {"60 seconds", "90 seconds", "180 seconds", "240 seconds", "No limit"};
+                    if (battle < 0) {
+                        battle = Port_Setting("net_battle", 0);
+                        timeLimit = Port_Setting("net_time", 3);
+                        if (battle < 0 || battle > 4) { battle = 0; }
+                        if (timeLimit < 0 || timeLimit > 4) { timeLimit = 3; }
+                    }
+                    ImGui::Spacing();
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::Combo("Battle", &battle, kBattle, 5);
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::Combo("Time limit", &timeLimit, kTime, 5);
+                }
                 ImGui::TextDisabled("The host's choices apply to both players.");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Join")) {
                 tab = 1;
+                ImGui::SetNextItemWidth(120.0f);
+                ImGui::InputText("Room code", roomCode, sizeof(roomCode), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::TextDisabled("or, without a code, the host's address and port:");
+                ImGui::BeginDisabled(roomCode[0] != '\0');
                 ImGui::SetNextItemWidth(260.0f);
                 ImGui::InputText("Host's address", address, sizeof(address));
                 ImGui::SetNextItemWidth(120.0f);
                 ImGui::InputText("Port", port, sizeof(port), ImGuiInputTextFlags_CharsDecimal);
+                ImGui::EndDisabled();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -368,7 +414,26 @@ static void build_net(void) {
                 set_open(false);
                 sNet = false;
             }
-            if (state == 1) {
+            bool byCode = tab == 0 ? useCode : roomCode[0] != '\0';
+            if (state != 0) {
+                lastState = state;
+            }
+            if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
+                if (tab == 0 && Port_LobbyCode()[0] != '\0') {
+                    ImGui::TextUnformatted("Room code:");
+                    ImGui::SameLine();
+                    ImGui::SetWindowFontScale(1.8f);
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", Port_LobbyCode());
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::TextUnformatted(state == 3 ? "Tell the other player this code. Waiting for them to join..." : "The other player has joined. Connecting...");
+                } else {
+                    ImGui::TextUnformatted(state == 1 ? "Found the room. Connecting to the host..." : tab == 0 ? "Getting a room code..." : "Looking for the room...");
+                }
+                if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+                    Port_LobbyCancel();
+                    lastState = 0;
+                }
+            } else if (state == 1) {
                 if (tab == 0) {
                     ImGui::Text("Waiting for the other player on port %s...", port);
                     if (Port_LobbyOther()) {
@@ -381,18 +446,35 @@ static void build_net(void) {
                     Port_LobbyCancel();
                 }
             } else {
-                bool can = atoi(port) > 0 && (tab == 0 || address[0] != '\0');
+                if (lastState == -3) {
+                    ImGui::TextWrapped("%s", Port_LobbyError());
+                } else if (lastState == -4) {
+                    ImGui::TextWrapped("The two games could not reach each other, directly or through the relay. "
+                                       "Hosting on a port (with port forwarding or a virtual network such as Tailscale) still works.");
+                }
+                bool can = byCode ? (tab == 0 || strlen(roomCode) == 6) : atoi(port) > 0 && (tab == 0 || address[0] != '\0');
                 ImGui::BeginDisabled(!can);
                 if (ImGui::Button(tab == 0 ? "Host a match" : "Join the match", ImVec2(200.0f, 0.0f))) {
                     if (tab == 0 && roll >= 0) {
                         Port_NetOptions(roll * 2, delay == 0 ? -2 : delay - 1);
+                        if (battle >= 0) {
+                            Port_NetRulesSet(battle == 0 ? 0 : battle == 1 ? 1 : 2, battle >= 2 ? battle - 2 : 0, timeLimit);
+                            Port_SettingSave("net_battle", battle);
+                            Port_SettingSave("net_time", timeLimit);
+                        }
                         Port_SettingSave("net_rollback2", roll * 2);
                         Port_SettingSave("net_delay2", delay - 1);
                         Port_SettingsWrite();
                     } else {
                         Port_NetOptions(-1, -1); // joining: the host's choices arrive with its answer
                     }
-                    Port_LobbyStart(tab == 0, address, atoi(port));
+                    Port_NetNameSet(name);
+                    lastState = 0;
+                    if (byCode) {
+                        Port_LobbyStartCode(tab == 0, roomCode);
+                    } else {
+                        Port_LobbyStart(tab == 0, address, atoi(port));
+                    }
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
@@ -435,7 +517,13 @@ int Ui_IsOpen(void) {
 }
 
 static void bind(int value) {
-    if (sCapKind == 1) {
+    if (sCapAction == PORT_ACTIONS) { // the row "Open this window"
+        if (sCapKind == 1) {
+            *PortInput_OverlayKey() = value > 0 ? value : SDL_SCANCODE_F1; // (cleared = F1 again: a keyboard always has a way in)
+        } else if (value < PORT_PAD_LT) { // (a button, not a trigger)
+            *PortInput_OverlayPad() = value;
+        }
+    } else if (sCapKind == 1) {
         PortInput_Keys(sCapPlayer)[sCapAction] = value;
     } else {
         PortInput_PadButtons(sCapPlayer)[sCapAction] = value;
@@ -565,6 +653,14 @@ static void video_tab(PortVideo &v) {
         ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Wider than 4:3 shows more of the fight to the sides. Menus are stretched.");
+    if (ImGui::BeginCombo("2D filtering", v.smooth2d ? "Smooth" : "Sharp (console)")) {
+        if (ImGui::Selectable("Sharp (console)", !v.smooth2d)) { v.smooth2d = 0; }
+        if (ImGui::Selectable("Smooth", v.smooth2d != 0)) { v.smooth2d = 1; }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("How the display of a fight, the menus and text are drawn above 1x internal resolution.\n"
+                          "Sharp: each of the PlayStation 2's pixels is a block. Smooth: as an emulator shows them.\n"
+                          "No difference at 1x.");
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
     ImGui::SameLine();
@@ -601,6 +697,22 @@ static void video_tab(PortVideo &v) {
     }
 #endif
     {
+        // In-between pictures (gs_draw.c): the fight is computed 30 times a second, as on the console; with this
+        // on one more picture is drawn between each two. The game itself, its replays and online play are the same.
+        static const char *kSmooth[] = { "Off (30, as the console)", "60 pictures a second", "120 pictures a second", "240 pictures a second" };
+        int smooth = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
+        ImGui::SetNextItemWidth(416.0f);
+        if (ImGui::Combo("Smooth motion", &smooth, kSmooth, 4)) {
+            gsInterp = smooth;
+            Port_SettingSave("interp", gsInterp);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Experimental. The game computes a fight 30 times a second. With this, more pictures are\n"
+                              "drawn between each two. The fight itself does not change, and neither does online play.\n"
+                              "The newest picture reaches the screen later: 17 ms at 60, 25 ms at 120, 29 ms at 240.\n"
+                              "Choose what your screen can show. F9 switches it off and on.");
+    }
+    {
         bool on = meter_on();
         if (ImGui::Checkbox("Show frame rate, and the connection in an online match", &on)) {
             sMeter = on;
@@ -624,14 +736,15 @@ static void video_tab(PortVideo &v) {
 }
 
 static void effects_tab(PortVideo &v) {
-    static const struct { const char *name, *tip; } fx[5] = {
+    static const struct { const char *name, *tip; } fx[6] = {
         {"Outline", "The black line around the fighters."},
         {"See-through tint", "The tint that shows a fighter behind scenery."},
         {"Depth tint", "The haze that colours distant things."},
         {"Glare and glow", "The bloom around bright things and the sky's glare."},
         {"Distance blur", "The soft focus on distant scenery."},
+        {"Movement blur", "The blur of the scenery while the view turns or moves fast."},
     };
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         bool on = !((v.fxOff >> i) & 1);
         if (ImGui::Checkbox(fx[i].name, &on)) { v.fxOff = (v.fxOff & ~(1 << i)) | (on ? 0 : 1 << i); }
         ImGui::SetItemTooltip("%s", fx[i].tip);
@@ -726,6 +839,25 @@ static void controls_tab(void) {
         ImGui::TableSetupColumn("Keyboard");
         ImGui::TableSetupColumn("Controller");
         ImGui::TableHeadersRow();
+        {   // what opens and closes this window (not a player's: one for the program)
+            const int a = PORT_ACTIONS;
+            bool waitKey = sCapKind == 1 && sCapAction == a, waitPad = sCapKind == 2 && sCapAction == a;
+            int key = *PortInput_OverlayKey(), pad = *PortInput_OverlayPad();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Open this window");
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "-", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                sCapKind = 1; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+            }
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad >= 0 ? pad_source_name(pad) : "START + SELECT", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                sCapKind = 2; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+            }
+        }
         for (int a = 0; a < PORT_ACTIONS; a++) {
             bool waitKey = sCapKind == 1 && sCapPlayer == player && sCapAction == a;
             bool waitPad = sCapKind == 2 && sCapPlayer == player && sCapAction == a;
@@ -809,7 +941,37 @@ static void build(void) {
             if (tab("Video", 0)) { video_tab(v); ImGui::EndTabItem(); }
             if (tab("Effects", 1)) { effects_tab(v); ImGui::EndTabItem(); }
             if (tab("Audio", 2)) { audio_tab(v); ImGui::EndTabItem(); }
-            if (tab("Controls", 3)) { controls_tab(); ImGui::EndTabItem(); }
+            if (tab("Controls", 3)) {
+                bool cs = Port_ClashSquare() != 0;
+                if (ImGui::Checkbox("Clashes: Square counts as a direction", &cs)) {
+                    Port_ClashSquareSet(cs);
+                }
+                ImGui::SetItemTooltip("In a clash of two beams or two rushes the game counts newly pressed directions:\n"
+                                      "turning the stick, or tapping the d-pad. With this on, each press of Square\n"
+                                      "counts as one of them while the clash lasts, as a tap of the d-pad does.\n"
+                                      "It only changes your own pad, so it can be used in online play.");
+                if (cs) {
+                    static const int kQuarters[] = {4, 6, 7, 8};
+                    static const char *const kWorth[] = {"1", "1.5", "1.75", "2"};
+                    int at = 2;
+                    for (int i = 0; i < 4; i++) {
+                        if (kQuarters[i] == Port_ClashSquareX()) {
+                            at = i;
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    if (ImGui::Combo("per press", &at, kWorth, 4)) {
+                        Port_ClashSquareXSet(kQuarters[at]);
+                    }
+                    ImGui::SetItemTooltip("What one press of Square is worth. The d-pad has four buttons to tap in turn and the\n"
+                                          "stick four directions a turn; Square is one button. 1 is a single d-pad tap.\n"
+                                          "Never more than one a frame, which is the most the game counts from any pad.");
+                }
+                ImGui::Separator();
+                controls_tab();
+                ImGui::EndTabItem();
+            }
             if (tab("Cheats", 4)) { cheats_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
@@ -892,7 +1054,7 @@ static void meter_draw(void) {
         ImGui::Text("%.0f fps   speed %.0f%%", sFps, sSpeed);
         if (Port_NetStats(n)) {
             if (n[0] >= 0) {
-                ImGui::Text("ping %d ms", n[0]);
+                ImGui::Text("ping %d ms%s", n[0], Port_LobbyRelayed() ? " (relay)" : "");
             } else {
                 ImGui::TextUnformatted("ping ...");
             }
@@ -999,9 +1161,11 @@ static bool frame_build(void) {
     bool songOn = gUiSongReady != 0 && gUiSongIdx >= 0 && gUiSongIdx < PortSongs_Count(); // (the same for an added song)
     bool overlay = nameOn || songOn;
     bool meter = sReady && meter_on();
+    // the players' names under the gauges of an online fight
+    bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !notice && !overlay && !meter)) {
+    if (!sReady || (!sOpen && !notice && !overlay && !meter && !names)) {
         return false;
     }
     sBuilt = true;
@@ -1021,6 +1185,31 @@ static bool frame_build(void) {
     }
     if (meter) {
         meter_draw();
+    }
+    if (names && gUiPresentW > 0 && gUiPresentH > 0) {
+        // Under each side's health bar (the game's 512 x 448 page: the bars end at about y 50). The left place is
+        // side 0's, or this player's own side when the HUD's sides are swapped.
+        ImDrawList *dl = ImGui::GetBackgroundDrawList();
+        float sx = (float)gUiPresentW / 512.0f, sy = (float)gUiPresentH / 448.0f;
+        float size = 15.0f * sy;
+        ImFont *font = ImGui::GetFont();
+        for (int place = 0; place < 2; place++) {
+            const char *text = Port_NetName(place ^ Port_HudSwap());
+            if (text[0] == '\0') {
+                continue;
+            }
+            ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+            float x = place == 0 ? (float)gUiPresentX + 62.0f * sx : (float)gUiPresentX + (512.0f - 62.0f) * sx - ts.x;
+            float y = (float)gUiPresentY + 56.0f * sy;
+            for (int ox = -1; ox <= 1; ox++) {
+                for (int oy = -1; oy <= 1; oy++) {
+                    if (ox != 0 || oy != 0) {
+                        dl->AddText(font, size, ImVec2(x + (float)ox * 1.5f, y + (float)oy * 1.5f), IM_COL32(0, 0, 0, 220), text);
+                    }
+                }
+            }
+            dl->AddText(font, size, ImVec2(x, y), IM_COL32(255, 255, 255, 255), text);
+        }
     }
     if (notice) { // a line over the picture for a few seconds (the end of an online match)
         ImGuiIO &io = ImGui::GetIO();

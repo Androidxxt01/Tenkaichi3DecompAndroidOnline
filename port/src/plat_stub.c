@@ -41,8 +41,22 @@ int func_00296B48() { return 0; }      /* sceSdRemoteCallbackInit */
 static int (*sVsyncHandler)(int);
 void sceGsResetGraph() {}
 void sceGsResetPath() {}
-void sceGsSetDefStoreImage() {}
-int sceGsExecStoreImage() { return 0; }
+/* Reading pixels back from the GS (the screen cross-fade of the fight's scenes reads the frame being shown: stg_b.c).
+   SetDef says what: the place in GS memory (in 64-pixel units), the size; Exec delivers it, 3 bytes a pixel. */
+static int sStoreBp, sStoreW, sStoreH;
+int sceGsSetDefStoreImage(void *si, int sbp, int sbw, int spsm, int x, int y, int w, int h) {
+    (void)si; (void)sbw; (void)spsm; (void)x; (void)y;
+    sStoreBp = sbp & 0xFFFF;
+    sStoreW = w & 0xFFFF;
+    sStoreH = h & 0xFFFF;
+    return 0;
+}
+int sceGsExecStoreImage(void *si, void *dst) {
+    extern void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb); /* gs/gs_core.c */
+    (void)si;
+    Gs_StoreImage((unsigned)sStoreBp, (unsigned)sStoreW, (unsigned)sStoreH, (unsigned char *)dst);
+    return 0;
+}
 int sceGsSyncPath() { return 0; }
 void *sceGsSyncVCallback(int (*handler)(int)) { void *old = (void *)sVsyncHandler; sVsyncHandler = handler; return old; }
 /* One vertical blank: runs the game's VBlank handler, as the interrupt would. */
@@ -69,8 +83,16 @@ PORT_HOST unsigned gPortPaceShiftNs = 0;
 /* Vertical blanks the game has really gone through (not the ones run again after a rollback): host data. */
 PORT_HOST unsigned gPortLiveBlanks = 0;
 
+PORT_HOST static unsigned long long sPaceNext = 0; /* when the coming vertical blank is due */
+#define next sPaceNext
+/* How long until the coming vertical blank, in microseconds (0: it is due or past, or there is no grid yet). For
+   what wants to do something before it without making it late (gs/gs_draw.c: in-between pictures). */
+int Port_VBlankUsLeft(void) {
+    unsigned long long t = now_ns();
+    return sPaceNext > t && sPaceNext - t < 100000000ull ? (int)((sPaceNext - t) / 1000ull) : 0;
+}
+
 static void vblank_wait(void) {
-    PORT_HOST static unsigned long long next = 0;
     struct timespec ts;
     unsigned long long t = now_ns(), after;
 
@@ -139,6 +161,7 @@ static void vblank_wait(void) {
     }
 }
 
+#undef next
 static unsigned char sPadLast[2][18]; /* (defined with the pads below) */
 void Port_VBlank(void) {
     {   /* the settings window open: the game waits here, between two frames, until it is closed (not online) */
@@ -164,6 +187,10 @@ void Port_VBlank(void) {
                                                begins or ends here */
         Port_SessionPoll();
     }
+    {
+        extern void Port_LobbyAuto(void); /* gs/net.c: BT3_LOBBY, the room-code lobby without its window (tests) */
+        Port_LobbyAuto();
+    }
     /* BT3_PACED=1: real-time pacing without a window too (sound tests) */
     {
         extern int Port_NetSession(void), Port_NetWarp(void); /* gs/net.c */
@@ -174,8 +201,21 @@ void Port_VBlank(void) {
         if (Port_NetSession() || again) {
             gPortResim = warp || again; /* an online session's start-up up to the versus menu is not shown and not timed */
         }
-        if ((GsGpu_Enabled() || getenv("BT3_PACED") != NULL) && getenv("BT3_UNCAPPED") == NULL && !warp && !again) {
-            vblank_wait();
+        {
+            /* gs/gs_draw.c: the pictures of the tick that follow its first (in-between pictures and the real one):
+               those due before this blank now, those due at it after the wait */
+            extern void GsGpu_InterpPump(int ahead_ms, int all);
+            /* (not while blanks are run again after a rollback or run ahead for an online session: those are
+               not shown and not timed, and waiting for a picture here would slow the catching up) */
+            if (GsGpu_Enabled() && !warp && !again) {
+                GsGpu_InterpPump(-1, 0); /* (-1: what can be finished before the blank) */
+            }
+            if ((GsGpu_Enabled() || getenv("BT3_PACED") != NULL) && getenv("BT3_UNCAPPED") == NULL && !warp && !again) {
+                vblank_wait();
+            }
+            if (GsGpu_Enabled() && !warp && !again) {
+                GsGpu_InterpPump(6, 0);
+            }
         }
     }
     {   /* BT3_PAD_TABLE=<file>: what each pad read during the blank that ends here, 36 bytes per blank (the input
@@ -339,6 +379,24 @@ int Port_AspectMilli(void) {
         }
         if (sAspectMilli < 1333) { sAspectMilli = 1333; }
         if (sAspectMilli > 4000) { sAspectMilli = 4000; }
+    }
+    {
+        /* BT3_ASPECT_AT=<frame>:<w>:<h> (testing): from that frame on the shape is w:h, as if it had been changed in
+           the settings window at that moment (a run without a window can then show a change made during a fight). */
+        static int at = -2, to;
+        extern unsigned gGsFrame; /* gs_core.c */
+        if (at == -2) {
+            int f = 0, w = 0, h = 0;
+            const char *e = getenv("BT3_ASPECT_AT");
+            at = -1;
+            if (e != NULL && sscanf(e, "%d:%d:%d", &f, &w, &h) == 3 && w > 0 && h > 0) {
+                at = f;
+                to = w * 1000 / h;
+            }
+        }
+        if (at >= 0 && (int)gGsFrame >= at) {
+            return to < 1333 ? 1333 : to > 4000 ? 4000 : to;
+        }
     }
     return sAspectMilli;
 }

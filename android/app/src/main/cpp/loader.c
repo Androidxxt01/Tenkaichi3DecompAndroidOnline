@@ -158,7 +158,8 @@ static int program_span(const char *path, uintptr_t *lo, uintptr_t *hi) {
 /* ---- The watchdog: every few seconds, where each thread of the process is, by name, in the log. Each thread's
    stack pointer and program counter come from /proc/self/task/<id>/syscall (it is in a system call when it waits);
    the stack above that is scanned for addresses inside the engine's code, named with dladdr (the engine exports
-   its symbols). A rough backtrace, but enough to see where the game waits. Off with BT3_WATCHDOG=0. */
+   its symbols). A rough backtrace, but enough to see where the game waits. On with BT3_WATCHDOG=1 (bt3_env.txt): it
+   costs a pass over every thread every 10 s on all devices, so it is not on by default. */
 static uintptr_t sCodeLo, sCodeHi;
 static unsigned *sVBlanks;
 
@@ -690,7 +691,7 @@ int SDL_main(int argc, char *argv[]) {
         }
         sVBlanks = (unsigned *)dlsym(handle, "gPortVBlanks");
         sEngine = handle;
-        if (getenv("BT3_WATCHDOG") == NULL || strcmp(getenv("BT3_WATCHDOG"), "0") != 0) {
+        if (getenv("BT3_WATCHDOG") != NULL && strcmp(getenv("BT3_WATCHDOG"), "0") != 0) { /* (off unless asked for) */
             pthread_t th;
             pthread_create(&th, NULL, watchdog, NULL);
             pthread_detach(th);

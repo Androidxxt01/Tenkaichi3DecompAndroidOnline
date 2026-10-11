@@ -759,11 +759,22 @@ static void frame_end(void) {
     struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu, lastFu;
     int haveFu = 0;
 
+    GsGpu_TitlePoll();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) { exit(0); }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) { Ui_Toggle(); continue; }
+        if (PortInput_Hotkey(&ev)) { Ui_Toggle(); continue; }
         if (Ui_Event(&ev)) { continue; }
         if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { exit(0); }
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
+            extern int gsInterp;
+            extern void Port_SettingSave(const char *name, int value);
+            extern void Port_SettingsWrite(void);
+            static int was = 1; /* (the same setting as F1, Video, Smooth motion: off, or back to what it was) */
+            if (gsInterp > 0) { was = gsInterp; gsInterp = 0; } else { gsInterp = was; }
+            Port_SettingSave("interp", gsInterp);
+            Port_SettingsWrite();
+            fprintf(stderr, "bt3: smooth motion %s\n", gsInterp == 0 ? "off" : gsInterp == 1 ? "60" : gsInterp == 2 ? "120" : "240");
+        }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F11) { GsDraw_FullscreenToggle(); }
     }
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
@@ -1061,6 +1072,46 @@ static void frame_end(void) {
     gsNative = 0;
 }
 
+/* Target i's picture, reduced to the GS's 512 x 448 (as the Vulkan back end's). */
+static int gl_target_read(int i, uint8_t *rgba) {
+    GLsizei w = 512 * SCALE, h = 448 * SCALE; /* (the picture's part of the target, as the screenshot's) */
+    uint8_t *px;
+    int x, y;
+
+    if (sTgFbo[i] == 0 || (px = malloc((size_t)w * h * 4)) == NULL) {
+        return 0;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sTgFbo[i]);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    for (y = 0; y < 448; y++) { /* (rows come back in texture order: the first is the scene's top) */
+        for (x = 0; x < 512; x++) {
+            memcpy(rgba + (y * 512 + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * (size_t)w + (size_t)(x * SCALE + SCALE / 2)) * 4, 4);
+        }
+    }
+    free(px);
+    return 1;
+}
+
+static void gl_target_copy(int src, int dst) {
+    GLenum one[1] = {GL_COLOR_ATTACHMENT0};
+    if (sTgCol[src] == 0 || sTgCol[dst] == 0) {
+        return;
+    }
+    glDisable(GL_SCISSOR_TEST); /* (the copy must be whole; frame_end sets its own state when it runs) */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sScratchRead);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[src], 0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sScratchDraw);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[dst], 0);
+    glDrawBuffers(1, one);
+    glBlitFramebuffer(0, 0, GS_W * SCALE, GS_H * SCALE, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
 GsBackend sGlBackend = {
     "opengl",
     gl_init,
@@ -1077,4 +1128,6 @@ GsBackend sGlBackend = {
     target_aux,
     target_depth,
     pipe_get,
+    gl_target_read,
+    gl_target_copy,
 };

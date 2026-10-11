@@ -67,6 +67,8 @@ class EngineSettings(private val file: File) {
         // Dragon Rage's own, read by the Android glue of the engine at start
         const val UNLOCK_ALL = "dr_unlock_all"    // 1: run Save_UnlockAll once on the next start, then 0
         const val FPS60 = "dr_fps60"              // reserved for the 60 fps mode
+        const val INTERP = "interp"               // smooth motion: 0 off, 1 60, 2 120, 3 240 pictures a second (the engine's)
+        const val PRESENT = "present"             // present mode: 0 automatic, 1 vsync (FIFO), 2 mailbox, 3 immediate
         const val TOUCH = "dr_touch"              // on-screen controls: 0 off, 1 automatic, 2 always
         const val TOUCH_OPACITY = "dr_touch_alpha" // 10..100 %
 
@@ -74,6 +76,6 @@ class EngineSettings(private val file: File) {
         const val SCALE_DEFAULT = 2
         /** The internal resolutions offered, in quarters (the engine's settings window has the same list). */
         val SCALE_STEPS = listOf(4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 32)
-        const val ASPECT_DEFAULT = 1778
+        const val ASPECT_DEFAULT = 0              // 0 = the screen's own shape (the engine measures it)
     }
 }

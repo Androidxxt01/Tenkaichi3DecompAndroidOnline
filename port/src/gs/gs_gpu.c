@@ -15,6 +15,9 @@
  * Not handled yet: a target sampled while it is being drawn to, region clamp / repeat, destination-alpha tests,
  * frame-buffer masks, 16-bit targets' precision.
  */
+#ifdef __ANDROID__
+#include <unistd.h> /* _exit */
+#endif
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -394,10 +397,19 @@ static int vk_init(void) {
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
     {
         SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+        int want = Port_Setting("present", 0); /* 0 automatic (as below), 1 vsync / FIFO, 2 mailbox, 3 immediate */
         if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
             mode = SDL_GPU_PRESENTMODE_MAILBOX;
         } else if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
             mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+        }
+        if (want >= 1 && want <= 3) { /* the one chosen in the settings, where the device has it (vsync always is) */
+            SDL_GPUPresentMode w = want == 1 ? SDL_GPU_PRESENTMODE_VSYNC : want == 2 ? SDL_GPU_PRESENTMODE_MAILBOX : SDL_GPU_PRESENTMODE_IMMEDIATE;
+            if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, w)) {
+                mode = w;
+            } else {
+                fprintf(stderr, "bt3: present mode %d is not offered by this device; the automatic choice is used\n", want);
+            }
         }
         if (getenv("BT3_PRESENT") != NULL) { /* (testing: vsync, mailbox or immediate) */
             const char *m = getenv("BT3_PRESENT");
@@ -534,12 +546,20 @@ static int vk_init(void) {
 /* The window's events: the settings window's key, the settings window, quitting, full screen. */
 static void poll_events(void) {
     SDL_Event ev;
+    GsGpu_TitlePoll();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
+#ifdef __ANDROID__
+            /* (not exit(): its destructors run while Android's own UI threads still use them, which aborts in
+               libhwui. Nothing is left to write: the log is flushed, saves are closed when written.) */
+            fflush(NULL);
+            _exit(0);
+#else
             exit(0);
+#endif
         }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && (ev.key.key == SDLK_F1 || ev.key.key == SDLK_AC_BACK)) {
-            Ui_Toggle(); /* (Android: the back button, which the loader asks SDL to hand over: android/.../loader.c) */
+        if (PortInput_Hotkey(&ev) || (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_AC_BACK)) {
+            Ui_Toggle(); /* F1, START + SELECT, or the list's key; Android: the back button (loader.c hands it over) */
             continue;
         }
         if (Ui_Event(&ev)) { /* the settings window is open and used it (Esc closes it) */
@@ -550,6 +570,16 @@ static void poll_events(void) {
             exit(0);
         }
 #endif
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
+            extern int gsInterp;
+            extern void Port_SettingSave(const char *name, int value);
+            extern void Port_SettingsWrite(void);
+            static int was = 1; /* (the same setting as F1, Video, Smooth motion: off, or back to what it was) */
+            if (gsInterp > 0) { was = gsInterp; gsInterp = 0; } else { gsInterp = was; }
+            Port_SettingSave("interp", gsInterp);
+            Port_SettingsWrite();
+            fprintf(stderr, "bt3: smooth motion %s\n", gsInterp == 0 ? "off" : gsInterp == 1 ? "60" : gsInterp == 2 ? "120" : "240");
+        }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F11) {
             GsDraw_FullscreenToggle();
         }
@@ -1425,6 +1455,80 @@ static void vk_frame_end(void) {
     gsNative = 0;
 }
 
+/* Target i's picture, reduced to the GS's 512 x 448 (the nearest pixel of each: the cross-fade it is for is a
+   half-second blend). A copy from the card, waited for: a few times in a fight's intro. */
+static int vk_target_read(int i, uint8_t *rgba) {
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_GPUTransferBuffer *tb;
+    SDL_GPUTextureRegion src;
+    SDL_GPUTextureTransferInfo dst;
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUCopyPass *cp;
+    SDL_GPUFence *fence;
+    Uint32 w = (Uint32)(512 * SCALE), h = (Uint32)(448 * SCALE), x, y; /* (the picture's part of the target) */
+    const uint8_t *px;
+
+    if (sDev == NULL || sTgCol[i] == NULL) {
+        return 0;
+    }
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    ti.size = w * h * 4;
+    tb = SDL_CreateGPUTransferBuffer(sDev, &ti);
+    if (tb == NULL) {
+        return 0;
+    }
+    cmd = SDL_AcquireGPUCommandBuffer(sDev);
+    cp = SDL_BeginGPUCopyPass(cmd);
+    SDL_zero(src);
+    src.texture = sTgCol[i];
+    src.w = w;
+    src.h = h;
+    src.d = 1;
+    SDL_zero(dst);
+    dst.transfer_buffer = tb;
+    SDL_DownloadFromGPUTexture(cp, &src, &dst);
+    SDL_EndGPUCopyPass(cp);
+    fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    SDL_WaitForGPUFences(sDev, true, &fence, 1);
+    SDL_ReleaseGPUFence(sDev, fence);
+    px = SDL_MapGPUTransferBuffer(sDev, tb, false);
+    if (px != NULL) {
+        for (y = 0; y < 448; y++) {
+            size_t sy = (size_t)(y * SCALE + SCALE / 2);
+            for (x = 0; x < 512; x++) {
+                size_t sx = (size_t)(x * SCALE + SCALE / 2);
+                if (sy >= h) { sy = h - 1; }
+                if (sx >= w) { sx = w - 1; }
+                memcpy(rgba + (y * 512 + x) * 4, px + (sy * w + sx) * 4, 4);
+            }
+        }
+        SDL_UnmapGPUTransferBuffer(sDev, tb);
+    }
+    SDL_ReleaseGPUTransferBuffer(sDev, tb);
+    return px != NULL;
+}
+
+static void vk_target_copy(int src, int dst) {
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUBlitInfo bl;
+    if (sDev == NULL || sTgCol[src] == NULL || sTgCol[dst] == NULL) {
+        return;
+    }
+    cmd = SDL_AcquireGPUCommandBuffer(sDev);
+    SDL_zero(bl);
+    bl.source.texture = sTgCol[src];
+    bl.source.w = (Uint32)(sTW * SCALE); /* (the targets' own size: 512 x 512 GS pixels on Android, see sTW) */
+    bl.source.h = (Uint32)(sTH * SCALE);
+    bl.destination.texture = sTgCol[dst];
+    bl.destination.w = (Uint32)(sTW * SCALE);
+    bl.destination.h = (Uint32)(sTH * SCALE);
+    bl.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    bl.filter = SDL_GPU_FILTER_NEAREST;
+    SDL_BlitGPUTexture(cmd, &bl);
+    SDL_SubmitGPUCommandBuffer(cmd);
+}
+
 GsBackend sVulkanBackend = {
     "vulkan",
     vk_init,
@@ -1441,4 +1545,6 @@ GsBackend sVulkanBackend = {
     target_aux,
     target_depth,
     pipe_get,
+    vk_target_read,
+    vk_target_copy,
 };

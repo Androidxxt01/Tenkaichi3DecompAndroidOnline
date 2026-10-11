@@ -47,8 +47,14 @@ static void regions_init(void) {
 #ifdef _WIN32
     long n = (long)GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
 #else
-    long n = (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    /* (Android: the engine is a library; the app puts <BT3_EXE>.mem next to the game's files, android.py writes it) */
+    long n = getenv("BT3_EXE") != NULL ? (long)snprintf(exe, sizeof(exe), "%s", getenv("BT3_EXE"))
+                                        : (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
 #endif
+    /* Android: the engine may have been loaded elsewhere than it was linked (loader.c); the list has the linked
+       addresses */
+    long long bias = getenv("BT3_ENGINE_BIAS") != NULL ? atoll(getenv("BT3_ENGINE_BIAS")) : 0;
+    extern int gPortScratchpadMapped; /* plat_mem.c */
 
     sRegions = 0;
     if (n > 0 && n < (long)sizeof(exe) - 1) {
@@ -60,7 +66,7 @@ static void regions_init(void) {
             fprintf(stderr, "bt3: state: %s is missing (written by port/tools/make_state.py at link time)\n", path);
         } else {
             while (sRegions < MAX_REGIONS - 2 && fscanf(fp, "%llx %llx", &a, &size) == 2) {
-                sRegion[sRegions].p = (const uint8_t *)(uintptr_t)a;
+                sRegion[sRegions].p = (const uint8_t *)(uintptr_t)(a + (unsigned long long)bias);
                 sRegion[sRegions].n = (size_t)size;
                 sRegion[sRegions].what = "globals";
                 sRegions++;
@@ -74,10 +80,12 @@ static void regions_init(void) {
     sRegion[sRegions].n = heapSize;
     sRegion[sRegions].what = "heap";
     sRegions++;
-    sRegion[sRegions].p = (const uint8_t *)(uintptr_t)0x70000000u;
-    sRegion[sRegions].n = 0x4000;
-    sRegion[sRegions].what = "scratchpad";
-    sRegions++;
+    if (gPortScratchpadMapped) { /* (Android: only where its address was free; the game addresses nothing there) */
+        sRegion[sRegions].p = (const uint8_t *)(uintptr_t)0x70000000u;
+        sRegion[sRegions].n = 0x4000;
+        sRegion[sRegions].what = "scratchpad";
+        sRegions++;
+    }
 }
 
 uint64_t Port_StateHash(void) {
@@ -174,12 +182,67 @@ void Port_StateLog(unsigned vblank, const void *fight, unsigned fightSize) {
  *                    one's checksum, restore, run the n again and compare each. What online play does when an
  *                    input arrives late: several frames are undone and replayed.
  * ------------------------------------------------------------------------------------------------------------- */
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #ifdef _WIN32
 /* Windows: the registers are kept with the compiler's own minimal setjmp (frame, stack pointer and the place to
    continue; everything else counts as lost over it, which is what a restore is), and the copy back runs on another
    stack through the port's stack switch (plat_mem.c). */
 extern void Port_CallOnStack(void (*fn)(void), void *top);
+#elif defined(__aarch64__)
+/* AArch64 (Android): no getcontext there. The registers a call keeps (x19..x30, the stack pointer, d8..d15) are
+   saved by port_jmp_save, which returns 0, and port_jmp_jump puts them back and returns 1 from that save, as the
+   Windows path does with setjmp; the copy back runs on another stack (call_on_stack). x18 is the platform's and is
+   left alone (it is the same thread). */
+typedef struct PortJmp { uint64_t r[21]; } PortJmp; /* x19..x28, x29, x30, sp, d8..d15 */
+extern int port_jmp_save(PortJmp *j) __attribute__((returns_twice));
+extern void port_jmp_jump(PortJmp *j) __attribute__((noreturn));
+__asm__(".text\n"
+        ".p2align 2\n"
+        ".globl port_jmp_save\n"
+        ".hidden port_jmp_save\n"
+        ".type port_jmp_save, %function\n"
+        "port_jmp_save:\n"
+        "    stp x19, x20, [x0, #0]\n"
+        "    stp x21, x22, [x0, #16]\n"
+        "    stp x23, x24, [x0, #32]\n"
+        "    stp x25, x26, [x0, #48]\n"
+        "    stp x27, x28, [x0, #64]\n"
+        "    stp x29, x30, [x0, #80]\n"
+        "    mov x16, sp\n"
+        "    str x16, [x0, #96]\n"
+        "    stp d8, d9, [x0, #104]\n"
+        "    stp d10, d11, [x0, #120]\n"
+        "    stp d12, d13, [x0, #136]\n"
+        "    stp d14, d15, [x0, #152]\n"
+        "    mov w0, #0\n"
+        "    ret\n"
+        ".size port_jmp_save, .-port_jmp_save\n"
+        ".p2align 2\n"
+        ".globl port_jmp_jump\n"
+        ".hidden port_jmp_jump\n"
+        ".type port_jmp_jump, %function\n"
+        "port_jmp_jump:\n"
+        "    ldp x19, x20, [x0, #0]\n"
+        "    ldp x21, x22, [x0, #16]\n"
+        "    ldp x23, x24, [x0, #32]\n"
+        "    ldp x25, x26, [x0, #48]\n"
+        "    ldp x27, x28, [x0, #64]\n"
+        "    ldp x29, x30, [x0, #80]\n"
+        "    ldr x16, [x0, #96]\n"
+        "    mov sp, x16\n"
+        "    ldp d8, d9, [x0, #104]\n"
+        "    ldp d10, d11, [x0, #120]\n"
+        "    ldp d12, d13, [x0, #136]\n"
+        "    ldp d14, d15, [x0, #152]\n"
+        "    mov w0, #1\n"
+        "    ret\n"
+        ".size port_jmp_jump, .-port_jmp_jump\n");
+
+/* fn on the stack that ends at top (16-byte aligned); fn does not come back. */
+static void __attribute__((noinline, noreturn)) call_on_stack(void (*fn)(void), void *top) {
+    __asm__ volatile("mov sp, %1\n\tblr %0\n\tbrk #0" : : "r"(fn), "r"(top) : "memory");
+    __builtin_unreachable();
+}
 #else
 #include <ucontext.h>
 #endif
@@ -195,6 +258,8 @@ typedef struct Snapshot {
     int parts;
 #ifdef _WIN32
     void *jb[5];
+#elif defined(__aarch64__)
+    PortJmp jb;
 #else
     ucontext_t ctx;
 #endif
@@ -247,6 +312,11 @@ static int __attribute__((noinline)) state_save(Snapshot *s) {
         return 1;
     }
     return 0;
+#elif defined(__aarch64__)
+    if (port_jmp_save(&s->jb) != 0) {
+        return 1;
+    }
+    return 0;
 #else
     getcontext(&s->ctx);
     return s->loaded;
@@ -254,7 +324,7 @@ static int __attribute__((noinline)) state_save(Snapshot *s) {
 }
 
 static Snapshot *sLoading;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__aarch64__)
 static ucontext_t sLoaderCtx;
 #endif
 
@@ -268,6 +338,8 @@ static void loader(void) {
     s->loaded = 1;
 #ifdef _WIN32
     __builtin_longjmp(s->jb, 1);
+#elif defined(__aarch64__)
+    port_jmp_jump(&s->jb);
 #else
     setcontext(&s->ctx);
 #endif
@@ -284,6 +356,8 @@ static void state_load(Snapshot *s) {
     sLoading = s;
 #ifdef _WIN32
     Port_CallOnStack(loader, stack + (1 << 20) - 64); /* (does not come back: the loader continues at the save) */
+#elif defined(__aarch64__)
+    call_on_stack(loader, stack + (1 << 20) - 64);
 #else
     getcontext(&sLoaderCtx);
     sLoaderCtx.uc_stack.ss_sp = stack;

@@ -96,9 +96,16 @@ fun SettingsScreen(vm: AppViewModel) {
             )
             Text(stringResource(R.string.aspect), style = MaterialTheme.typography.titleSmall)
             ChipRow(
-                options = listOf("4:3" to 1333, "16:10" to 1600, "16:9" to 1778, "21:9" to 2389, "32:9" to 3556),
+                options = listOf(
+                    stringResource(R.string.aspect_screen) to 0, "4:3" to 1333, "16:10" to 1600, "16:9" to 1778, "20:9" to 2222,
+                    "21:9" to 2389, "32:9" to 3556,
+                ),
                 selected = get(EngineSettings.ASPECT, EngineSettings.ASPECT_DEFAULT),
                 onSelect = { vm.setting(EngineSettings.ASPECT, it) },
+            )
+            Text(
+                stringResource(R.string.aspect_hint),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             ToggleRow(stringResource(R.string.show_fps), stringResource(R.string.show_fps_text), get(EngineSettings.METER, 0) != 0) {
                 vm.setting(EngineSettings.METER, if (it) 1 else 0)
@@ -130,7 +137,28 @@ fun SettingsScreen(vm: AppViewModel) {
         }
 
         SectionCard(stringResource(R.string.performance), Icons.Rounded.Speed, accent = MaterialTheme.colorScheme.secondary) {
-            ToggleRow(stringResource(R.string.fps60), stringResource(R.string.fps60_text), false, enabled = false) {}
+            Text(stringResource(R.string.fps60), style = MaterialTheme.typography.titleSmall)
+            ChipRow(
+                options = listOf(stringResource(R.string.off) to 0, "60" to 1, "120" to 2),
+                selected = get(EngineSettings.INTERP, 0).coerceIn(0, 2),
+                onSelect = { vm.setting(EngineSettings.INTERP, it) },
+            )
+            Text(
+                stringResource(R.string.fps60_text),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(stringResource(R.string.present_mode), style = MaterialTheme.typography.titleSmall)
+            ChipRow(
+                options = listOf(
+                    stringResource(R.string.present_auto) to 0, "FIFO (VSync)" to 1, "Mailbox" to 2, "Immediate" to 3,
+                ),
+                selected = get(EngineSettings.PRESENT, 0).coerceIn(0, 3),
+                onSelect = { vm.setting(EngineSettings.PRESENT, it) },
+            )
+            Text(
+                stringResource(R.string.present_mode_text),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         GpuDriverCard(vm)

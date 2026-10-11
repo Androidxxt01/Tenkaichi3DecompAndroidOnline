@@ -41,4 +41,5 @@ port/build_release/
 /android/app/src/main/jniLibs/
 /android/app/src/main/assets/libbt3.so.dat
 /android/app/src/main/assets/libbt3.so.rel
+/android/app/src/main/assets/libbt3.so.mem
 /android/app/src/main/java/org/libsdl/

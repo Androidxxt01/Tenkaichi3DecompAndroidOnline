@@ -528,6 +528,7 @@ void Port_HeapRegion(uint8_t **base, uint32_t *size) {
 #if PORT_LP64
 static void low_region_take(void);
 #endif
+int gPortScratchpadMapped; /* gs/state.c: the scratchpad is mapped at 0x70000000 (Android: only if that was free) */
 __attribute__((constructor)) static void Port_MapMemory(void) {
 #ifdef _WIN32
     /* The program only works at the address it was linked for (the game's pointers are 4 bytes and absolute). It
@@ -600,9 +601,12 @@ __attribute__((constructor)) static void Port_MapMemory(void) {
     if (mmap((void *)(uintptr_t)0x70000000u, 0x4000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) !=
         (void *)(uintptr_t)0x70000000u) {
         fprintf(stderr, "bt3: the scratchpad's address is taken (not needed)\n");
+    } else {
+        gPortScratchpadMapped = 1;
     }
 #else
     map(0x70000000u, 0x4000, "the scratchpad");
+    gPortScratchpadMapped = 1;
 #endif
     gPortStage = "memory ready, before the program's main";
 }
