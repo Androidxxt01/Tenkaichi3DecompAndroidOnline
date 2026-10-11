@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import com.dfdx047.dragonrage.R
 import android.net.Uri
+import android.util.Log
 import java.io.File
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
@@ -40,32 +41,75 @@ class TexturePacks(private val context: Context, private val paths: GamePaths, p
     /** Unpacks a zip as a new pack. Returns the pack, or throws with a message for the user. */
     suspend fun import(uri: Uri, onProgress: (String) -> Unit): TexturePack = withContext(Dispatchers.IO) {
         val fileName = resolver.displayName(uri)
-        if (!fileName.endsWith(".zip", ignoreCase = true)) {
-            throw IllegalArgumentException(context.getString(R.string.err_zip_only))
-        }
-        val input = resolver.openInputStream(uri) ?: throw IllegalStateException(context.getString(R.string.err_open_file))
-        input.use { importStream(fileName.substringBeforeLast('.'), it, onProgress) }
+        // a zip is known by its first bytes ("PK"), not by its name: some file pickers give names without ".zip"
+        val isZip = resolver.openInputStream(uri)?.use { it.read() == 'P'.code && it.read() == 'K'.code }
+            ?: throw IllegalStateException(context.getString(R.string.err_open_file))
+        if (!isZip) throw IllegalArgumentException(context.getString(R.string.err_zip_only))
+        importFrom(fileName.substringBeforeLast('.'), { resolver.openInputStream(uri) ?: throw IllegalStateException(context.getString(R.string.err_open_file)) }, onProgress)
     }
 
     /** The same from any stream (a downloaded file); [rawName] becomes the pack's folder name. */
-    suspend fun importStream(rawName: String, input: InputStream, onProgress: (String) -> Unit): TexturePack = withContext(Dispatchers.IO) {
+    suspend fun importStream(rawName: String, input: InputStream, onProgress: (String) -> Unit): TexturePack =
+        importOnce(rawName, input, Charsets.UTF_8, onProgress)
+
+    /**
+     * Imports from a source that can be opened again: zips made on Windows often name their files in the old DOS
+     * encoding, which Java refuses as UTF-8 ("MALFORMED"); then it is read once more in that encoding.
+     */
+    suspend fun importFrom(rawName: String, open: () -> InputStream, onProgress: (String) -> Unit): TexturePack = try {
+        open().use { importOnce(rawName, it, Charsets.UTF_8, onProgress) }
+    } catch (e: IllegalArgumentException) {
+        if (e.message?.contains("MALFORMED", ignoreCase = true) != true) throw e
+        Log.w("bt3", "texture import: the zip's names are not UTF-8; reading them as CP437")
+        open().use { importOnce(rawName, it, java.nio.charset.Charset.forName("IBM437"), onProgress) }
+    }
+
+    private suspend fun importOnce(
+        rawName: String,
+        input: InputStream,
+        charset: java.nio.charset.Charset,
+        onProgress: (String) -> Unit,
+    ): TexturePack = withContext(Dispatchers.IO) {
         val name = safeName(rawName)
-        val staging = uniqueChild(paths.temp, name)
+        // unpacked next to textures/ (the same storage: the finished pack is moved, not copied, and takes its room once)
+        val stagingRoot = File(paths.root, ".import").also { it.mkdirs() }
+        val staging = uniqueChild(stagingRoot, name)
         staging.mkdirs()
+        Log.i("bt3", "texture import: \"$rawName\" into ${paths.textures}")
         try {
             var found = 0
-            val files = unzip(input, staging, onBytes = { onProgress(context.getString(R.string.progress_extracting, formatBytes(it))) }) { rel ->
-                if (isReplacement(rel.substringAfterLast('/'))) found++
+            val others = mutableListOf<String>()
+            val files = try {
+                unzip(input, staging, onBytes = { onProgress(context.getString(R.string.progress_extracting, formatBytes(it))) }, charset = charset) { rel ->
+                    val file = rel.substringAfterLast('/')
+                    if (isReplacement(file)) found++ else if (others.size < 3 && (file.endsWith(".png", true) || file.endsWith(".dds", true))) others += file
+                }
+            } catch (e: java.util.zip.ZipException) {
+                Log.w("bt3", "texture import: the zip cannot be read", e)
+                val m = e.message.orEmpty()
+                if (m.contains("compression method", true) || m.contains("DEFLATED", true) || m.contains("encrypt", true)) {
+                    throw IllegalArgumentException(context.getString(R.string.err_zip_method))
+                }
+                throw e
             }
+            Log.i("bt3", "texture import: $files files, $found replacement textures" + if (others.isEmpty()) "" else ", other images: ${others.joinToString()}")
             if (files == 0) throw IllegalArgumentException(context.getString(R.string.err_zip_empty))
             if (found == 0) {
-                throw IllegalArgumentException(context.getString(R.string.err_no_textures))
+                val msg = context.getString(R.string.err_no_textures)
+                throw IllegalArgumentException(if (others.isEmpty()) msg else msg + " " + context.getString(R.string.err_no_textures_seen, others.joinToString()))
             }
+            paths.textures.mkdirs()
             val dest = uniqueChild(paths.textures, name)
             if (!staging.renameTo(dest)) {
                 staging.copyRecursively(dest, overwrite = true)
             }
-            list().first { it.dir == dest }
+            val pack = list().firstOrNull { it.dir.canonicalPath == dest.canonicalPath }
+                ?: throw IllegalStateException(context.getString(R.string.err_open_file))
+            Log.i("bt3", "texture import: \"${pack.name}\" ready, ${pack.textures} textures, ${formatBytes(pack.bytes)}")
+            pack
+        } catch (e: Exception) {
+            if (e !is kotlinx.coroutines.CancellationException) Log.w("bt3", "texture import failed: ${e.message}", e)
+            throw e
         } finally {
             staging.deleteRecursively()
         }

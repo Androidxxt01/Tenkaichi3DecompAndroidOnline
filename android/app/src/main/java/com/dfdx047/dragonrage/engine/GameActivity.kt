@@ -17,7 +17,9 @@ import android.widget.SeekBar
 import android.widget.TextView
 import com.dfdx047.dragonrage.MainActivity
 import com.dfdx047.dragonrage.R
+import com.dfdx047.dragonrage.data.EngineSettings
 import com.dfdx047.dragonrage.data.GamePaths
+import com.dfdx047.dragonrage.data.Renderer
 import com.dfdx047.dragonrage.data.GpuDrivers
 import com.dfdx047.dragonrage.touch.PadSkin
 import com.dfdx047.dragonrage.touch.TouchConfig
@@ -54,6 +56,8 @@ class GameActivity : SDLActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         paths = GamePaths(this).also { it.ensure() }
+        // the renderer for this start (Vulkan, or OpenGL ES for Mali when automatic): written before the engine reads it
+        runCatching { Renderer.apply(EngineSettings(paths.settings), paths) }
         store = TouchStore(paths.root)
         installDataList()
         super.onCreate(savedInstanceState)
@@ -186,12 +190,19 @@ class GameActivity : SDLActivity() {
         }
         try {
             c.outputStream.use { it.write(body.toByteArray()) }
-            val stream = if (c.responseCode in 200..299) c.inputStream else c.errorStream
-            stream?.bufferedReader()?.use { it.readText() } ?: ""
+            val code = c.responseCode
+            val stream = if (code in 200..299) c.inputStream else c.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            // (in the log for a report about online play: the matchmaking's refusals, limits and outages)
+            if (code !in 200..299) android.util.Log.w("bt3", "net: HTTP $code from ${url.substringAfterLast('/')}: ${text.take(200)}")
+            text
         } finally {
             c.disconnect()
         }
-    }.getOrDefault("")
+    }.getOrElse {
+        android.util.Log.w("bt3", "net: ${url.substringAfterLast('/')} failed: $it")
+        ""
+    }
 
     /**
      * "Quit to launcher" of the in-game window (port/src/gs/ui.cpp, through JNI on the engine's thread): the launcher

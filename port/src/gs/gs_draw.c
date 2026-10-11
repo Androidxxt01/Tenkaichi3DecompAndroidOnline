@@ -90,6 +90,22 @@ uint32_t gsVuUniCount;
 GsTarget gsTargets[MAX_TARGETS];
 int gsTargetCount;
 int gsTexCount;
+extern int gGsNoBcTextures; /* gs_gl.c: the OpenGL ES renderer without DXT textures */
+/* How many decoded textures are kept. When full, all not used for two seconds go in one sweep. The game keeps
+   rewriting its texture memory, so in a fight the count climbs by hundreds every few seconds: on Android a smaller
+   cache keeps the GPU memory lower (phones share it with everything else) and each sweep shorter (a sweep of
+   thousands of textures in one frame is a stutter). With a texture pack on, the whole cache, as before. */
+#ifdef __ANDROID__
+#define TEX_CAP (sTexPackOn && TexPack_Count() != 0 ? MAX_TEX : 3072) /* (a pack's textures come from storage: kept longer) */
+#else
+#define TEX_CAP MAX_TEX
+#endif
+/* and how much GPU memory they may take: a texture pack's replacements can be megabytes each */
+#ifdef __ANDROID__
+#define TEX_BYTES_CAP (768ull << 20)
+#else
+#define TEX_BYTES_CAP (6ull << 30)
+#endif
 unsigned gsFxOff;
 int gsGlowPercent = GLOW_DEFAULT;
 int gsFilter;
@@ -117,7 +133,9 @@ typedef struct Tex {
     int replaced;  /* from a texture pack: several times the size, so always filtered (texture_get) */
     uint32_t ow, oh, rw, rh; /* then: the original's size and the replacement's */
     uint32_t amax;           /* and the largest alpha byte of the original */
+    uint32_t bytes;          /* its size in GPU memory (about: the levels' pixels) */
 } Tex;
+static uint64_t sTexBytes; /* the cache's textures' sizes, together */
 static Tex sTex[MAX_TEX];
 static uint16_t sTexBucket[TEX_BUCKETS]; /* index + 1 of a cache entry, 0 = empty (open addressing) */
 static Tex *sLast; /* the entry the previous lookup returned */
@@ -162,6 +180,7 @@ static GsTex texture_get(int ctx) {
     Tex *t;
     uint64_t tex_t0;
     TexPackImage pack;
+    uint64_t texBytes = 0;
     uint32_t packMaxAlpha = 255, rw = tw, rh = th;
     int packFormat = GS_TEXFMT_RGBA8, replaced = 0;
 
@@ -197,16 +216,18 @@ static GsTex texture_get(int ctx) {
     if (sBackend->texSlotsLeft() <= 0) {
         return gsWhite;
     }
-    if (gsTexCount == MAX_TEX) {
-        /* full: drop everything not used for two seconds (or, failing that, not used this frame) in one sweep */
+    if (gsTexCount >= TEX_CAP || sTexBytes > TEX_BYTES_CAP) {
+        /* full (by count, or by size: a texture pack's replacements are large): drop everything not used for two
+           seconds (or, failing that, not used this frame) in one sweep */
         unsigned keep = gGsFrame > 120 ? gGsFrame - 120 : 0;
         int pass, n;
-        for (pass = 0; pass < 2 && gsTexCount == MAX_TEX; pass++, keep = gGsFrame) {
+        for (pass = 0; pass < 2 && (gsTexCount >= TEX_CAP || sTexBytes > TEX_BYTES_CAP); pass++, keep = gGsFrame) {
             for (n = 0, i = 0; i < (uint32_t)gsTexCount; i++) {
                 if (sTex[i].last >= keep) {
                     sTex[n++] = sTex[i];
                 } else {
                     sBackend->texDestroy(sTex[i].tex);
+                    sTexBytes -= sTex[i].bytes;
                 }
             }
             gsTexCount = n;
@@ -220,7 +241,7 @@ static GsTex texture_get(int ctx) {
             }
             sTexBucket[h] = (uint16_t)(i + 1);
         }
-        if (gsTexCount == MAX_TEX) {
+        if (gsTexCount >= TEX_CAP) {
             return gsWhite; /* this one frame uses more textures than the cache holds */
         }
     }
@@ -230,7 +251,23 @@ static GsTex texture_get(int ctx) {
         const char *path = TexPack_Lookup(tbp, tbw, psm, tw, th, (uint32_t)((t0 >> 34) & 1), cbp, cpsm, &packMaxAlpha);
         if (path != NULL && TexPack_Load(path, &pack)) {
             packFormat = pack.format & 3;
-            if (sBackend->texSlotsLeft() >= pack.levels) {
+            if (packFormat != GS_TEXFMT_RGBA8 && gGsNoBcTextures) {
+                /* A GPU without DXT (phones): the .dds replacement is unpacked to RGBA here, once per load, with its
+                   levels above 2048 pixels left out on Android (memory); failing that the game's own texture is shown */
+#ifdef __ANDROID__
+                const uint32_t maxSide = 2048;
+#else
+                const uint32_t maxSide = 16384;
+#endif
+                if (TexPack_Decompress(&pack, maxSide)) {
+                    packFormat = GS_TEXFMT_RGBA8;
+                } else {
+                    TexPack_Free(&pack);
+                }
+            }
+            if (pack.file == NULL) {
+                /* (left out above) */
+            } else if (sBackend->texSlotsLeft() >= pack.levels) {
                 replaced = 1;
                 gGpuTexReplaced++;
                 rw = pack.w;
@@ -273,6 +310,7 @@ static GsTex texture_get(int ctx) {
             uint32_t lw = pack.w >> level ? pack.w >> level : 1, lh = pack.h >> level ? pack.h >> level : 1;
             void *buf = malloc(pack.bytes[level]);
             memcpy(buf, pack.data[level], pack.bytes[level]);
+            texBytes += pack.bytes[level];
             sBackend->texUpload(t->tex, level, lw, lh, packFormat, buf, pack.bytes[level]);
         }
         TexPack_Free(&pack);
@@ -311,6 +349,8 @@ static GsTex texture_get(int ctx) {
     t->rw = rw;
     t->rh = rh;
     t->amax = replaced ? packMaxAlpha : 255u;
+    t->bytes = replaced ? (uint32_t)(texBytes < 0xFFFFFFFFu ? texBytes : 0xFFFFFFFFu) : tw * th * 4;
+    sTexBytes += t->bytes;
     return t->tex;
 }
 
@@ -1403,9 +1443,10 @@ int GsGpu_Init(void) {
         return 0;
     }
 #ifdef __ANDROID__
-    /* Android: the OpenGL back end is desktop GL 3.3 core, which Android does not have (GLES only): Vulkan always */
-    sb = &sVulkanBackend;
-    api = "vulkan";
+    /* Android: the setting "gpu_api" (1 = OpenGL ES 3.2, the OpenGL back end built for ES; else Vulkan) is written by the
+       launcher, which picks OpenGL ES for Mali GPUs by itself unless the player chose; if the chosen one cannot start,
+       the other is tried (api NULL) */
+    fprintf(stderr, "bt3: renderer chosen: %s\n", sb == &sGlBackend ? "OpenGL ES" : "Vulkan");
 #endif
     sBackend = sb;
     if (!sb->init()) {

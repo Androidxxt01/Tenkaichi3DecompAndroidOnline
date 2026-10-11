@@ -261,4 +261,10 @@
     <string name="shortcut_unsupported">This launcher does not offer pinned shortcuts. Long-press the app icon: there is a Play entry.</string>
     <string name="touch_auto_mode">Automatic menu / fight</string>
     <string name="touch_auto_mode_text">Menu buttons in the menus and fight buttons in a fight, switched by itself. The MENU / FIGHT button on the screen still changes it by hand (for the pause menu in a fight, for example). Game-specific layout only.</string>
+    <string name="renderer">Renderer</string>
+    <string name="renderer_auto">Automatic</string>
+    <string name="renderer_now">GPU: %1$s. The game starts with %2$s.</string>
+    <string name="renderer_text">Automatic: OpenGL ES on Mali GPUs, Vulkan on the others (Adreno runs Vulkan best). OpenGL ES (experimental) leaves out: depth clamping (what comes very near the camera can be cut off), the screen filters (FXAA, FSR, GSR); present mode FIFO is VSync on, the others off. If the chosen renderer cannot start, the game uses the other one. Takes effect the next time the game starts.</string>
+    <string name="err_zip_method">This zip uses a compression the app cannot read (Deflate64, LZMA, BZip2 or a password). Pack it again as a normal .zip (\"Deflate\", no password), for example with 7-Zip or ZArchiver.</string>
+    <string name="err_no_textures_seen">Images in the zip: %1$s.</string>
 </resources>

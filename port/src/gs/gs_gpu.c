@@ -397,6 +397,49 @@ static void present_apply(void) {
     }
 }
 
+#ifdef __ANDROID__
+/* Android takes the window's surface away when the app goes to the background and gives a new one when it comes back.
+   The Vulkan surface and swapchain made for the old one then show nothing (a black screen on return; the log has
+   "queueBuffer failed" as the old surface goes). So the window is handed back to SDL when the app leaves and claimed
+   again, with a surface made for the new one, when it returns (SDL sends the foreground event only once the new
+   surface is there). Nothing is drawn in between. */
+static int sWindowGone, sWindowBack;
+static void window_away(void) {
+    if (!sWindowGone && sDev != NULL && sWindow != NULL) {
+        SDL_WaitForGPUIdle(sDev);
+        SDL_ReleaseWindowFromGPUDevice(sDev, sWindow);
+        sWindowGone = 1;
+        sWindowBack = 0;
+        fprintf(stderr, "bt3: the app went to the background: the window's surface is let go\n");
+    }
+}
+/* 1 = the window can be drawn to (claimed again first, after a return from the background) */
+static int window_ready(void) {
+    static int failed;
+    if (!sWindowGone) {
+        return 1;
+    }
+    if (!sWindowBack) {
+        return 0;
+    }
+    if (SDL_ClaimWindowForGPUDevice(sDev, sWindow)) {
+        int want = GsGpu_PresentGet();
+        sWindowGone = sWindowBack = 0;
+        failed = 0;
+        SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_pick(want));
+        sPresentNow = want;
+        fprintf(stderr, "bt3: back from the background: the window has a new surface\n");
+        return 1;
+    }
+    if (failed++ % 60 == 0) {
+        fprintf(stderr, "bt3: back from the background, but the window cannot be claimed yet: %s\n", SDL_GetError());
+    }
+    return 0;
+}
+#else
+#define window_ready() 1
+#endif
+
 static int vk_init(void) {
     SDL_GPUBufferCreateInfo bi;
     SDL_GPUTransferBufferCreateInfo ti;
@@ -561,13 +604,30 @@ static int vk_init(void) {
                 SDL_GetStringProperty(p, SDL_PROP_GPU_DEVICE_DRIVER_INFO_STRING, ""));
     }
     fprintf(stderr, "bt3: %d logical processors, %d MB of memory\n", SDL_GetNumLogicalCPUCores(), SDL_GetSystemRAM());
+    {   /* DXT (BC1-BC3) textures, which a texture pack's .dds files are: phones' GPUs mostly have none, and then the
+           replacements are unpacked to RGBA on the CPU (gs_draw.c) instead of being drawn white */
+        extern int gGsNoBcTextures; /* gs_gl.c */
+        int i;
+        gGsNoBcTextures = 0;
+        for (i = 1; i < 4; i++) {
+            if (!SDL_GPUTextureSupportsFormat(sDev, kTexFormat[i], SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER)) {
+                gGsNoBcTextures = 1;
+            }
+        }
+        if (gGsNoBcTextures) {
+            fprintf(stderr, "bt3: the GPU has no DXT textures: a texture pack's .dds files are unpacked on the CPU\n");
+        }
+    }
     pipelines_preload();
     return 1;
 }
 
 /* --- the frame ---------------------------------------------------------------------------------- */
 
-/* The window's events: the settings window's key, the settings window, quitting, full screen. */
+/* The window's events: the settings window's key, the settings window, quitting, full screen. (Also the OpenGL ES
+   renderer's on Android, through GsGpu_PollEvents: the back key, START + SELECT, leaving.) */
+static void poll_events(void);
+void GsGpu_PollEvents(void) { poll_events(); }
 static void poll_events(void) {
     SDL_Event ev;
     GsGpu_TitlePoll();
@@ -575,6 +635,16 @@ static void poll_events(void) {
         Ui_Toggle(); /* START + SELECT, held together (also the on-screen controller's two buttons) */
     }
     while (SDL_PollEvent(&ev)) {
+#ifdef __ANDROID__
+        if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND || ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
+            window_away();
+            continue;
+        }
+        if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+            sWindowBack = 1;
+            continue;
+        }
+#endif
         if (ev.type == SDL_EVENT_QUIT) {
 #ifdef __ANDROID__
             /* (not exit(): its destructors run while Android's own UI threads still use them, which aborts in
@@ -818,6 +888,12 @@ int GsGpu_PauseFrame(void) {
     SDL_GPUTexture *swap = NULL;
     Uint32 sw = 0, sh = 0;
 
+#ifdef __ANDROID__
+    if (sDev == NULL) {
+        extern int GsGl_PauseFrame(void); /* gs_gl.c: the OpenGL ES renderer's */
+        return GsGl_PauseFrame();
+    }
+#endif
     if (sDev == NULL || sWindow == NULL || sLastShown < 0) {
         return 0; /* (not this back end, or nothing shown yet: the game goes on) */
     }
@@ -826,14 +902,20 @@ int GsGpu_PauseFrame(void) {
     if (cmd == NULL) {
         return 0;
     }
-    present_apply();
-    if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, sWindow, &swap, &sw, &sh) && swap != NULL) {
+    if (window_ready()) {
+        present_apply();
+    }
+    if (window_ready() && SDL_WaitAndAcquireGPUSwapchainTexture(cmd, sWindow, &swap, &sw, &sh) && swap != NULL) {
         show_target(cmd, sLastShown, swap, sw, sh);
         Ui_Draw(cmd, swap);
     }
     SDL_SubmitGPUCommandBuffer(cmd);
     return 1;
 }
+
+/* the heartbeat's sums (Android's "alive" line every 300 frames): frame-end times, frames, passes and copies */
+static uint64_t sHb[6], sHbPass, sHbCopy;
+static unsigned sHbN;
 
 static void vk_frame_end(void) {
     SDL_GPUCommandBuffer *cmd;
@@ -857,8 +939,27 @@ static void vk_frame_end(void) {
 #ifdef __ANDROID__
     if (gGsFrame % 300 == 0) { /* a heartbeat in the log (adb logcat -s bt3): is the game running, and drawing? */
         extern unsigned gPortVBlanks;
+        static uint64_t lastNs;
+        static unsigned lastBlank;
+        uint64_t nowNs = SDL_GetTicksNS();
         fprintf(stderr, "bt3: alive: frame %u, game blank %u, %u draws, %u vertices, %d targets, %d textures\n", gGsFrame, gPortVBlanks,
                 gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount);
+        /* how fast the game runs (60 game blanks a second is full speed) and where a frame's end spends its time, over
+           the last 300 frames: the numbers a report about slowness needs, without BT3_GS_VERBOSE */
+        if (lastNs != 0 && nowNs > lastNs && sHbN > 0) {
+            double secs = (double)(nowNs - lastNs) / 1e9, bps = (double)(gPortVBlanks - lastBlank) / secs;
+            fprintf(stderr, "bt3: speed %.0f%% (%.1f game blanks/s, %.1f pictures/s over %.1f s%s); per frame, ms: uploads %.2f, "
+                            "draws %.2f, to the driver %.2f, waiting for the screen %.2f, showing %.2f, presenting %.2f; "
+                            "%.1f render passes, %.1f copies\n",
+                    bps * 100.0 / 60.0, bps, (double)sHbN / secs, secs, Ui_Pauses() ? ", the menu was open" : "",
+                    (double)sHb[0] / sHbN / 1e6, (double)sHb[1] / sHbN / 1e6, (double)sHb[5] / sHbN / 1e6, (double)sHb[2] / sHbN / 1e6,
+                    (double)sHb[3] / sHbN / 1e6, (double)sHb[4] / sHbN / 1e6, (double)sHbPass / sHbN, (double)sHbCopy / sHbN);
+        }
+        memset(sHb, 0, sizeof(sHb));
+        sHbN = 0;
+        sHbPass = sHbCopy = 0;
+        lastNs = nowNs;
+        lastBlank = gPortVBlanks;
     }
 #endif
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
@@ -1277,8 +1378,11 @@ static void vk_frame_end(void) {
         }
     }
     sEndT[5] = gpu_now();
-    present_apply();
-    acquired = SDL_WaitAndAcquireGPUSwapchainTexture(cmd, sWindow, &swap, &sw, &sh);
+    acquired = false;
+    if (window_ready()) {
+        present_apply();
+        acquired = SDL_WaitAndAcquireGPUSwapchainTexture(cmd, sWindow, &swap, &sw, &sh);
+    }
     sEndT[3] = gpu_now();
 #ifdef __ANDROID__
     if (gGsFrame % 300 == 0) { /* (with the heartbeat: why a frame would not reach the screen) */
@@ -1387,7 +1491,16 @@ static void vk_frame_end(void) {
         sum[2] += sEndT[3] - sEndT[5];
         sum[3] += sEndT[4] - sEndT[3];
         sum[4] += now - sEndT[4];
+        sHb[0] += sEndT[1] - sEndT[0];
+        sHb[1] += sEndT[2] - sEndT[1];
+        sHb[5] += sEndT[5] - sEndT[2];
+        sHb[2] += sEndT[3] - sEndT[5];
+        sHb[3] += sEndT[4] - sEndT[3];
+        sHb[4] += now - sEndT[4];
+        sHbN++;
         if (++count == 60) {
+            sHbPass += sPassN;
+            sHbCopy += sCopyN;
             if (getenv("BT3_GS_VERBOSE") != NULL) {
                 fprintf(stderr, "time:   of ending the frame: uploads %.2f ms, issuing the draws %.2f, handing them to the driver %.2f, "
                                 "waiting for the screen's buffer %.2f, showing %.2f, presenting %.2f\n",

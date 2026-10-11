@@ -15,9 +15,13 @@ object TouchBridge {
 
     private var loggedTeamQueryFailure = false
 
-    fun playerTeamSize(): Int = try {
+    private var nativeMissing = false
+
+    fun playerTeamSize(): Int = if (nativeMissing) -1 else try {
         nativePlayerTeamSize().coerceIn(-1, 5)
     } catch (t: Throwable) {
+        // (the launcher's own process has no engine: ask once, not twice a second with an error each time)
+        if (t is UnsatisfiedLinkError) nativeMissing = true
         // The previous implementation swallowed UnsatisfiedLinkError and left the team buttons hidden forever.
         if (!loggedTeamQueryFailure) {
             loggedTeamQueryFailure = true

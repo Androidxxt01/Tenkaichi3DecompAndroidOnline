@@ -46,12 +46,44 @@ static SDL_TLSID sMine; /* the thread's own search number */
 
 static const char *match_url(void) {
     const char *e = SDL_getenv("BT3_MATCH_URL");
+#ifdef __ANDROID__
+    /* Android: <game folder>/match_url.txt, one line "https://...", names another Worker (one's own, see
+       port/matchmaking/README.md) without a new build */
+    static char fromFile[256];
+    static int read;
+    if ((e == NULL || e[0] == '\0') && !read) {
+        extern const char *Port_FileRoot(void); /* plat_file.c */
+        char path[600];
+        FILE *f;
+        read = 1;
+        SDL_snprintf(path, sizeof(path), "%s/match_url.txt", Port_FileRoot());
+        if ((f = fopen(path, "r")) != NULL) {
+            if (fgets(fromFile, sizeof(fromFile), f) != NULL) {
+                fromFile[strcspn(fromFile, " \r\n")] = '\0';
+                while (fromFile[0] != '\0' && fromFile[strlen(fromFile) - 1] == '/') {
+                    fromFile[strlen(fromFile) - 1] = '\0';
+                }
+                if (SDL_strncmp(fromFile, "https://", 8) != 0) {
+                    fromFile[0] = '\0';
+                }
+            }
+            fclose(f);
+        }
+        fprintf(stderr, "net: matchmaking service %s\n", fromFile[0] != '\0' ? fromFile : MATCH_URL_DEFAULT);
+    }
+    if ((e == NULL || e[0] == '\0') && fromFile[0] != '\0') {
+        return fromFile;
+    }
+#endif
     return e != NULL && e[0] != '\0' ? e : MATCH_URL_DEFAULT;
 }
 
 static void set_state(int state, const char *error) {
     if ((int)(intptr_t)SDL_GetTLS(&sMine) != SDL_GetAtomicInt(&sM.gen)) {
         return;
+    }
+    if (error != NULL && state < 0) {
+        fprintf(stderr, "net: %s\n", error); /* (in the log, for a report about online play) */
     }
     SDL_LockMutex(sM.lock);
     sM.st.state = state;
@@ -435,6 +467,7 @@ static int SDLCALL match_thread(void *arg) {
             return 0;
         }
         if (!json_str(answer, "code", sM.code, sizeof(sM.code)) || !json_str(answer, "key", key, sizeof(key))) {
+            fprintf(stderr, "net: the service answered: %.200s\n", answer);
             set_state(-1, SDL_strstr(answer, "busy") != NULL ? "Too many rooms from this address; try again in a few minutes." : "The matchmaking service gave no room.");
             return 0;
         }
@@ -442,7 +475,11 @@ static int SDLCALL match_thread(void *arg) {
             /* A relay address, if the service gives access to one: published with the others, for a player who
                cannot reach this one directly. The code is shown only after this, so nobody joins before. */
             char server[128], user[160], pass[160], relay[64];
+#ifdef __ANDROID__
+            if (1) { /* (Android: always in the log; most phones on mobile data need the relay) */
+#else
             if (SDL_getenv("BT3_RELAY_LOG") != NULL) {
+#endif
                 char why[160] = "";
                 json_str(answer, "noRelay", why, sizeof(why));
                 fprintf(stderr, "relay: the service %s%s\n", SDL_strstr(answer, "\"turn\"") != NULL ? "gave access" : "gave no access: ", why);
@@ -508,6 +545,7 @@ static int SDLCALL match_thread(void *arg) {
         (void)you;
         SDL_memset(&st, 0, sizeof(st));
         if (!json_peer(answer, &st)) {
+            fprintf(stderr, "net: the service answered: %.200s\n", answer);
             set_state(-1, SDL_strstr(answer, "version") != NULL ? "The host's game is a different version: both players need the same release." :
                           SDL_strstr(answer, "full") != NULL ? "Someone has already joined that room." :
                           SDL_strstr(answer, "no room") != NULL ? "No room with that code (codes last ten minutes)." :

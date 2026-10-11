@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dfdx047.dragonrage.AppViewModel
 import com.dfdx047.dragonrage.BuildConfig
 import com.dfdx047.dragonrage.data.EngineSettings
+import com.dfdx047.dragonrage.data.Renderer
 import com.dfdx047.dragonrage.ui.components.ScreenTitle
 import com.dfdx047.dragonrage.ui.components.SectionCard
 import com.dfdx047.dragonrage.ui.theme.Dbz
@@ -137,6 +138,25 @@ fun SettingsScreen(vm: AppViewModel) {
         }
 
         SectionCard(stringResource(R.string.performance), Icons.Rounded.Speed, accent = MaterialTheme.colorScheme.secondary) {
+            val gpu by vm.gpuName.collectAsStateWithLifecycle()
+            val choice = get(EngineSettings.RENDERER, Renderer.AUTO).coerceIn(0, 2)
+            Text(stringResource(R.string.renderer), style = MaterialTheme.typography.titleSmall)
+            ChipRow(
+                options = listOf(
+                    stringResource(R.string.renderer_auto) to Renderer.AUTO, "Vulkan" to Renderer.VULKAN, "OpenGL ES" to Renderer.OPENGL,
+                ),
+                selected = choice,
+                onSelect = { vm.setRenderer(it) },
+            )
+            val picks = if (Renderer.gpuApi(choice, gpu) == 1) "OpenGL ES" else "Vulkan"
+            Text(
+                stringResource(R.string.renderer_now, gpu.ifEmpty { "?" }, picks),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                stringResource(R.string.renderer_text),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Text(stringResource(R.string.fps60), style = MaterialTheme.typography.titleSmall)
             ChipRow(
                 options = listOf(stringResource(R.string.off) to 0, "60" to 1, "120" to 2),

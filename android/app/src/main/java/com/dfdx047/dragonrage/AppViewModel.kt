@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import com.dfdx047.dragonrage.data.AppUpdates
 import com.dfdx047.dragonrage.data.CatalogState
 import com.dfdx047.dragonrage.data.EngineSettings
+import com.dfdx047.dragonrage.data.Renderer
 import com.dfdx047.dragonrage.data.Net
 import com.dfdx047.dragonrage.data.TextureCatalog
 import com.dfdx047.dragonrage.data.UpdateState
@@ -147,6 +148,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refreshAll()
     }
 
+    // ---- renderer: Vulkan, or OpenGL ES (chosen by itself for Mali GPUs)
+
+    private val _gpuName = MutableStateFlow("")
+    /** The GPU's name as its OpenGL ES driver gives it ("" until known). */
+    val gpuName: StateFlow<String> = _gpuName.asStateFlow()
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            _gpuName.value = runCatching { Renderer.gpuName(paths) }.getOrDefault("")
+            runCatching { Renderer.apply(settings, paths) }
+            _settings.value = settings.snapshot()
+        }
+    }
+
+    fun setRenderer(choice: Int) = viewModelScope.launch(Dispatchers.IO) {
+        settings.set(EngineSettings.RENDERER, choice)
+        runCatching { Renderer.apply(settings, paths) }
+        _settings.value = settings.snapshot()
+    }
+
     fun refreshAll() {
         viewModelScope.launch(Dispatchers.IO) {
             _packs.value = packs.list()
@@ -237,7 +258,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (!Net.looksLikeZip(file)) throw IOException(str(R.string.err_download_not_zip))
                 val label = name ?: u.substringBefore('?').substringAfterLast('/').removeSuffix(".zip").ifBlank { "Texture pack" }
-                val p = file.inputStream().use { packs.importStream(label, it) { d -> setDetail(d) } }
+                val p = packs.importFrom(label, { file.inputStream() }) { d -> setDetail(d) }
                 _packs.value = packs.list()
                 say(str(R.string.msg_pack_installed, p.name, p.textures))
             } finally {

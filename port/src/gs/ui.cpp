@@ -271,7 +271,13 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
     }
     if (device == NULL) { // the OpenGL back end (gs_gl.c), with its context current
         sGL = 1;
-        if (!ImGui_ImplSDL3_InitForOpenGL(window, (SDL_GLContext)gl_context) || !ImGui_ImplOpenGL3_Init("#version 330 core")) {
+        if (!ImGui_ImplSDL3_InitForOpenGL(window, (SDL_GLContext)gl_context) || !ImGui_ImplOpenGL3_Init(
+#ifdef __ANDROID__
+                                                                                     "#version 300 es"
+#else
+                                                                                     "#version 330 core"
+#endif
+                                                                                     )) {
             return 0;
         }
     } else {
@@ -694,24 +700,36 @@ static void video_tab(PortVideo &v) {
     }
     ImGui::SetItemTooltip("Takes effect the next time the game starts.");
     SDL_free(displays);
-#ifndef __ANDROID__ // (Android: Vulkan only, gs_draw.c)
     {   // which renderer draws the game: Vulkan (the default) or OpenGL 3.3, for machines without a working Vulkan
+        // (Android: OpenGL ES 3.2; the launcher picks it by itself for Mali GPUs unless chosen here or in the app)
+#ifdef __ANDROID__
+        static const char *const kApi[] = {"Vulkan", "OpenGL ES"};
+#else
         static const char *const kApi[] = {"Vulkan", "OpenGL"};
+#endif
         static int api = -1;
         if (api < 0) {
             api = Port_Setting("gpu_api", 0) == 1 ? 1 : 0;
         }
         if (ImGui::Combo("Renderer", &api, kApi, 2)) {
             Port_SettingSave("gpu_api", api);
+#ifdef __ANDROID__
+            Port_SettingSave("dr_renderer", api + 1); /* (the player's choice: the launcher no longer picks by GPU) */
+#endif
             Port_SettingsWrite();
         }
+#ifdef __ANDROID__
+        ImGui::SetItemTooltip("Takes effect the next time the game starts. If the chosen one cannot start, the game tries the other.\n"
+                              "OpenGL ES: chosen by itself for Mali GPUs. No depth clamping (what comes very near the camera\n"
+                              "can be cut), no screen filters (FXAA, FSR, GSR).");
+#else
         ImGui::SetItemTooltip("Takes effect the next time the game starts. Both draw the same picture; Vulkan is faster.\n"
                               "If the chosen one cannot start, the game tries the other.");
+#endif
         if (api != (sGL ? 1 : 0)) {
             ImGui::TextDisabled("Running now: %s. %s from the next start.", kApi[sGL ? 1 : 0], kApi[api]);
         }
     }
-#endif
     {
         // In-between pictures (gs_draw.c): the fight is computed 30 times a second, as on the console; with this
         // on one more picture is drawn between each two. The game itself, its replays and online play are the same.

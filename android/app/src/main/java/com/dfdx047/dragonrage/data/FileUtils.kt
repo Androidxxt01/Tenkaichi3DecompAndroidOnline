@@ -52,12 +52,18 @@ fun uniqueChild(parent: File, wanted: String): File {
  * every file written, relative to [dest]; [onBytes] the number of compressed-stream bytes read so far is not
  * available from ZipInputStream, so progress is reported in uncompressed bytes written.
  */
-suspend fun unzip(input: InputStream, dest: File, onBytes: (Long) -> Unit = {}, onEntry: (String) -> Unit = {}): Int {
+suspend fun unzip(
+    input: InputStream,
+    dest: File,
+    onBytes: (Long) -> Unit = {},
+    charset: java.nio.charset.Charset = Charsets.UTF_8,
+    onEntry: (String) -> Unit = {},
+): Int {
     val canonicalDest = dest.canonicalFile
     var files = 0
     var written = 0L
     val buf = ByteArray(1 shl 16)
-    ZipInputStream(input.buffered(1 shl 16)).use { zip ->
+    ZipInputStream(input.buffered(1 shl 16), charset).use { zip ->
         while (true) {
             coroutineContext.ensureActive()
             val e = zip.nextEntry ?: break

@@ -260,4 +260,10 @@
     <string name="shortcut_unsupported">Este launcher não oferece atalhos fixos. Segure o ícone do app: há uma opção Jogar.</string>
     <string name="touch_auto_mode">Menu / luta automático</string>
     <string name="touch_auto_mode_text">Botões de menu nos menus e botões de luta na partida, trocados sozinhos. O botão MENU / LUTA na tela continua trocando na mão (para o menu de pausa em uma luta, por exemplo). Só no estilo do jogo.</string>
+    <string name="renderer">Renderizador</string>
+    <string name="renderer_auto">Automático</string>
+    <string name="renderer_now">GPU: %1$s. O jogo abre com %2$s.</string>
+    <string name="renderer_text">Automático: OpenGL ES nas GPUs Mali, Vulkan nas outras (a Adreno roda melhor em Vulkan). O OpenGL ES (experimental) não tem: depth clamp (o que chega muito perto da câmera pode ser cortado) e os filtros de tela (FXAA, FSR, GSR); no present mode, FIFO liga o VSync e os outros desligam. Se o renderizador escolhido não abrir, o jogo usa o outro. Vale na próxima vez que o jogo abrir.</string>
+    <string name="err_zip_method">Este zip usa uma compressão que o app não lê (Deflate64, LZMA, BZip2 ou senha). Compacte de novo como .zip normal (\"Deflate\", sem senha), por exemplo no 7-Zip ou no ZArchiver.</string>
+    <string name="err_no_textures_seen">Imagens no zip: %1$s.</string>
 </resources>

@@ -24,5 +24,7 @@ const char *TexPack_Lookup(uint32_t tbp, uint32_t tbw, uint32_t psm, uint32_t tw
                            uint32_t *maxAlpha);
 int TexPack_Load(const char *path, TexPackImage *img);
 void TexPack_Free(TexPackImage *img);
+/* A DXT (BC1-BC3) image made 8-bit RGBA in place, levels above maxSide left out (for GPUs without DXT); 0 = failed. */
+int TexPack_Decompress(TexPackImage *img, uint32_t maxSide);
 
 #endif

@@ -238,7 +238,7 @@ def link_cmd(objs, extra, out=None, base=None):
     return [str(LLVM / "bin/clang++")] + TARGET + [
         "-fuse-ld=lld", "-no-pie", "-nostartfiles", "-o", str(out)] + extra + objs + [
         str(SYSROOT / f"usr/lib/aarch64-linux-android/{API}/crtbegin_so.o"),
-        f"-L{SDL3 / 'lib'}", f"-L{rtdir()}", "-lSDL3", "-llog", "-landroid", "-lm", "-ldl",
+        f"-L{SDL3 / 'lib'}", f"-L{rtdir()}", "-lSDL3", "-llog", "-landroid", "-lm", "-ldl", "-lGLESv3",
         "-static-libstdc++",
         str(SYSROOT / f"usr/lib/aarch64-linux-android/{API}/crtend_so.o"),
         f"-Wl,--image-base={base:#x}", "-Wl,--no-dynamic-linker", "-Wl,--export-dynamic", "-Wl,--hash-style=both",

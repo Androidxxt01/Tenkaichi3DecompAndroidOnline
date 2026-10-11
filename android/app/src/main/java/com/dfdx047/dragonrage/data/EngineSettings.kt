@@ -69,6 +69,8 @@ class EngineSettings(private val file: File) {
         const val FPS60 = "dr_fps60"              // reserved for the 60 fps mode
         const val INTERP = "interp"               // smooth motion: 0 off, 1 60, 2 120, 3 240 pictures a second (the engine's)
         const val PRESENT = "present"             // present mode: 0 automatic, 1 vsync (FIFO), 2 mailbox, 3 immediate
+        const val GPU_API = "gpu_api"             // the engine's renderer: 0 Vulkan, 1 OpenGL ES 3.2 (written from RENDERER)
+        const val RENDERER = "dr_renderer"        // the player's choice: 0 automatic (OpenGL ES for Mali), 1 Vulkan, 2 OpenGL ES
         const val CLASH_SQUARE = "clash_square"   // clashes (beams, rushes): each press of Square counts as a direction; on by default
         const val TOUCH = "dr_touch"              // on-screen controls: 0 off, 1 automatic, 2 always
         const val TOUCH_OPACITY = "dr_touch_alpha" // 10..100 %
