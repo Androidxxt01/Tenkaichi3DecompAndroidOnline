@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,8 +58,14 @@ import com.dfdx047.dragonrage.touch.PadSkin
 import com.dfdx047.dragonrage.touch.Ps2
 import com.dfdx047.dragonrage.touch.TouchConfig
 import com.dfdx047.dragonrage.touch.TouchMode
+import com.dfdx047.dragonrage.touch.TouchLayout
+import com.dfdx047.dragonrage.touch.TouchListener
 import com.dfdx047.dragonrage.touch.TouchPadView
+import com.dfdx047.dragonrage.touch.TouchSurface
+import com.dfdx047.dragonrage.touch.createTouchSurface
+import com.dfdx047.dragonrage.touch.view
 import com.dfdx047.dragonrage.ui.components.ScreenTitle
+import com.dfdx047.dragonrage.data.EngineSettings
 import com.dfdx047.dragonrage.ui.components.SectionCard
 import com.dfdx047.dragonrage.ui.theme.Dbz
 import kotlin.math.roundToInt
@@ -67,6 +74,7 @@ import kotlin.math.roundToInt
 @Composable
 fun ControlsScreen(vm: AppViewModel) {
     val c by vm.touch.collectAsStateWithLifecycle()
+    val engine by vm.engineSettings.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf(false) }
     var editMacro by remember { mutableStateOf<Macro?>(null) }
 
@@ -81,17 +89,27 @@ fun ControlsScreen(vm: AppViewModel) {
             Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MaterialTheme.shapes.large)
                 .background(Color(0xFF0B1020)),
         ) {
-            AndroidView(
-                factory = { ctx -> TouchPadView(ctx, c.copy(mode = TouchMode.ALWAYS)) },
-                update = { it.config = c.copy(mode = TouchMode.ALWAYS) },
-                modifier = Modifier.fillMaxSize(),
-            )
+            key(c.layout) { // (the other layout is another view)
+                AndroidView(
+                    factory = { ctx -> createTouchSurface(ctx, c.copy(mode = TouchMode.ALWAYS)).view },
+                    update = { (it as TouchSurface).config = c.copy(mode = TouchMode.ALWAYS) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
         FilledTonalButton(onClick = { editing = true }, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Edit, null, Modifier.size(18.dp)); Spacer(Modifier.size(8.dp)); Text(stringResource(R.string.touch_edit_layout))
         }
 
         SectionCard(stringResource(R.string.touch_controls), Icons.Rounded.SportsEsports, accent = Dbz.KiBlue) {
+            Text(stringResource(R.string.touch_layout), style = MaterialTheme.typography.titleSmall)
+            ChipRow(
+                options = listOf(stringResource(R.string.touch_layout_mobile) to TouchLayout.MOBILE.ordinal, stringResource(R.string.touch_layout_classic) to TouchLayout.CLASSIC.ordinal),
+                selected = c.layout.ordinal,
+                onSelect = { vm.updateTouch(c.copy(layout = TouchLayout.entries[it])) },
+            )
+            Text(stringResource(R.string.touch_layout_text), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ToggleRow(stringResource(R.string.touch_auto_mode), stringResource(R.string.touch_auto_mode_text), c.autoMode) { vm.updateTouch(c.copy(autoMode = it)) }
             ChipRow(
                 options = listOf(stringResource(R.string.touch_off) to 0, stringResource(R.string.touch_auto) to 1, stringResource(R.string.touch_always) to 2),
                 selected = c.mode.ordinal,
@@ -112,6 +130,14 @@ fun ControlsScreen(vm: AppViewModel) {
             StepSlider(stringResource(R.string.touch_size), { "${it * 10}%" }, (c.scale * 10).roundToInt(), 5..20) { vm.updateTouch(c.copy(scale = it / 10f)) }
             ToggleRow(stringResource(R.string.touch_haptics), stringResource(R.string.touch_haptics_text), c.haptics) { vm.updateTouch(c.copy(haptics = it)) }
             ToggleRow(stringResource(R.string.touch_float), stringResource(R.string.touch_float_text), c.sticksFloat) { vm.updateTouch(c.copy(sticksFloat = it)) }
+        }
+
+        SectionCard(stringResource(R.string.clash_title), Icons.Rounded.Bolt, accent = Dbz.KiBlue) {
+            ToggleRow(
+                stringResource(R.string.clash_button),
+                stringResource(R.string.clash_button_text),
+                (engine[EngineSettings.CLASH_SQUARE] ?: 1) != 0,
+            ) { vm.setting(EngineSettings.CLASH_SQUARE, if (it) 1 else 0) }
         }
 
         SectionCard(stringResource(R.string.macros), Icons.Rounded.Bolt, accent = Dbz.SaiyanGold) {
@@ -156,18 +182,20 @@ private fun LayoutEditor(c: TouchConfig, onChange: (TouchConfig) -> Unit, onDone
         Box(Modifier.fillMaxSize().background(Color(0xFF0B1020))) {
             // Keep the preview itself unobstructed. Help and tool labels are drawn inside TouchPadView's
             // compact top toolbar instead of as a transparent Compose layer over the controls.
-            AndroidView(
-                factory = { ctx ->
-                    TouchPadView(ctx, c.copy(mode = TouchMode.ALWAYS), editing = true).apply {
-                        listener = object : TouchPadView.Listener {
-                            override fun onConfigChanged(config: TouchConfig) = onChange(config.copy(mode = c.mode))
-                            override fun onEditDone() = onDone()
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-                update = { view -> view.config = c.copy(mode = TouchMode.ALWAYS) },
-            )
+            key(c.layout) {
+                AndroidView(
+                    factory = { ctx ->
+                        createTouchSurface(ctx, c.copy(mode = TouchMode.ALWAYS), editing = true).apply {
+                            listener = object : TouchListener {
+                                override fun onConfigChanged(config: TouchConfig) = onChange(config.copy(mode = c.mode))
+                                override fun onEditDone() = onDone()
+                            }
+                        }.view
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { view -> (view as TouchSurface).config = c.copy(mode = TouchMode.ALWAYS) },
+                )
+            }
         }
     }
 }

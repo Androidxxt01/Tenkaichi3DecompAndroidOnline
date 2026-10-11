@@ -49,6 +49,13 @@ static GsBackend *sBackend;
 static int sSmooth2d = 1; /* the setting "2D filtering" (smooth_2d; BT3_2D_SMOOTH=0/1 wins): 1 smooth */
 static int sWholeFrame; /* the draw being set up shows a frame the game read back (the cross-fade) */
 
+#ifdef __ANDROID__
+/* "Screen": the picture takes the shape of the device's own screen (the launcher's "Tela"; saved as aspect_milli 0). */
+static int sAspectAuto;
+#else
+#define sAspectAuto 0
+#endif
+
 /* The one window both back ends share: shape (aspect), full screen and display are the renderer's, not a
    back end's, so the settings window and F11 work the same whichever back end is running. */
 static SDL_Window *sWindow;
@@ -1208,6 +1215,7 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     if (count > 0 && Port_Setting("aspect_milli", 0) == 0 && getenv("BT3_ASPECT") == NULL && getenv("BT3_WIDE") == NULL) {
         extern void Port_SetAspectMilli(int milli); /* plat_stub.c */
         SDL_Rect r;
+        sAspectAuto = 1;
         if (SDL_GetDisplayBounds(displays[0], &r) && r.w > 0 && r.h > 0) {
             int big = r.w > r.h ? r.w : r.h, small = r.w > r.h ? r.h : r.w;
             Port_SetAspectMilli(big * 1000 / small);
@@ -1283,9 +1291,22 @@ int Port_FxOff(int bit) {
     return (gsFxOff & (unsigned)bit) != 0;
 }
 
+#ifdef __ANDROID__
+static int screen_aspect_milli(void) {
+    SDL_Window *w = GsDraw_Window();
+    SDL_DisplayID id = w != NULL ? SDL_GetDisplayForWindow(w) : 0;
+    SDL_Rect r;
+    if (id != 0 && SDL_GetDisplayBounds(id, &r) && r.w > 0 && r.h > 0) {
+        int big = r.w > r.h ? r.w : r.h, small = r.w > r.h ? r.h : r.w;
+        return big * 1000 / small;
+    }
+    return 0;
+}
+#endif
+
 void GsGpu_GetSettings(PortVideo *v) {
     v->scale4 = gsPendingScale4 ? gsPendingScale4 : gsScale4;
-    v->aspectMilli = Port_AspectMilli();
+    v->aspectMilli = sAspectAuto ? 0 : Port_AspectMilli(); /* (0: the screen's own shape, Android) */
     v->fullscreen = sFullscreen;
     v->fxOff = (int)gsFxOff;
     v->glow = gsGlowPercent;
@@ -1306,7 +1327,13 @@ void GsGpu_SetSettings(const PortVideo *v) {
         gsPendingScale4 = v->scale4 < 4 ? 4 : v->scale4 > 32 ? 32 : v->scale4; /* applied between two frames */
     }
     if (v->aspectMilli != now.aspectMilli) {
+#ifdef __ANDROID__
+        int milli = v->aspectMilli == 0 ? screen_aspect_milli() : v->aspectMilli;
+        sAspectAuto = v->aspectMilli == 0;
+        Port_SetAspectMilli(milli > 0 ? milli : Port_AspectMilli());
+#else
         Port_SetAspectMilli(v->aspectMilli);
+#endif
         GsDraw_WindowShape();
     }
     if (v->fullscreen != now.fullscreen) {
@@ -1330,7 +1357,7 @@ void GsGpu_SetSettings(const PortVideo *v) {
         Port_SettingSave("scale4", q);
         Port_SettingSave("scale", (q + 2) / 4);
     }
-    Port_SettingSave("aspect_milli", Port_AspectMilli());
+    Port_SettingSave("aspect_milli", sAspectAuto ? 0 : Port_AspectMilli());
     Port_SettingSave("fullscreen", sFullscreen);
     Port_SettingSave("fx_off", (int)gsFxOff);
     Port_SettingSave("glow", gsGlowPercent);

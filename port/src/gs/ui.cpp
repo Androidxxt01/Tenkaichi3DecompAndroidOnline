@@ -14,6 +14,10 @@
 #include "imgui_impl_opengl3.h"
 #include "ui.h"
 #include "namefont.h"
+#ifdef __ANDROID__
+#include <jni.h>
+#include <unistd.h>
+#endif
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -617,7 +621,11 @@ static bool tab(const char *label, int index) {
 }
 
 static void video_tab(PortVideo &v) {
-    static const struct { const char *name; int milli; } aspects[] = {{"4:3 (original)", 1333}, {"16:10", 1600}, {"16:9", 1778}, {"21:9", 2389}, {"32:9", 3556}};
+    static const struct { const char *name; int milli; } aspects[] = {
+#ifdef __ANDROID__
+        {"Screen (the device's own shape)", 0},
+#endif
+        {"4:3 (original)", 1333}, {"16:10", 1600}, {"16:9", 1778}, {"20:9", 2222}, {"21:9", 2389}, {"32:9", 3556}};
     char label[64];
     int best = 0, count = 0;
 
@@ -643,8 +651,12 @@ static void video_tab(PortVideo &v) {
         }
         ImGui::SetItemTooltip("How the game's picture is scaled to the screen.\nFXAA smooths jagged edges; FSR and Snapdragon GSR upscale with sharper edges,\nbest with an internal resolution below the screen's (1x to 2x).");
     }
-    for (int i = 1; i < (int)(sizeof(aspects) / sizeof(aspects[0])); i++) {
-        if (abs(aspects[i].milli - v.aspectMilli) < abs(aspects[best].milli - v.aspectMilli)) { best = i; }
+    {   // the entry that is the picture's shape: the exact one (0 = the screen's, Android), else the nearest
+        int bestd = 1 << 30;
+        for (int i = 0; i < (int)(sizeof(aspects) / sizeof(aspects[0])); i++) {
+            int d = aspects[i].milli == 0 ? (v.aspectMilli == 0 ? 0 : 1 << 29) : abs(aspects[i].milli - v.aspectMilli);
+            if (d < bestd) { bestd = d; best = i; }
+        }
     }
     if (ImGui::BeginCombo("Aspect ratio", aspects[best].name)) {
         for (int i = 0; i < (int)(sizeof(aspects) / sizeof(aspects[0])); i++) {
@@ -652,7 +664,11 @@ static void video_tab(PortVideo &v) {
         }
         ImGui::EndCombo();
     }
+#ifdef __ANDROID__
+    ImGui::SetItemTooltip("Screen: the picture takes the shape of this device's screen, so it is not squeezed.\nWider than 4:3 shows more of the fight to the sides. Menus are stretched.");
+#else
     ImGui::SetItemTooltip("Wider than 4:3 shows more of the fight to the sides. Menus are stretched.");
+#endif
     if (ImGui::BeginCombo("2D filtering", v.smooth2d ? "Smooth" : "Sharp (console)")) {
         if (ImGui::Selectable("Sharp (console)", !v.smooth2d)) { v.smooth2d = 0; }
         if (ImGui::Selectable("Smooth", v.smooth2d != 0)) { v.smooth2d = 1; }
@@ -712,6 +728,22 @@ static void video_tab(PortVideo &v) {
                               "The newest picture reaches the screen later: 17 ms at 60, 25 ms at 120, 29 ms at 240.\n"
                               "Choose what your screen can show. F9 switches it off and on.");
     }
+#ifdef __ANDROID__
+    {   // how finished pictures reach the screen (gs_gpu.c); applied between two frames, kept for the next start
+        static const char *kPresent[] = { "Automatic (Mailbox where the device has it)", "FIFO (VSync)", "Mailbox", "Immediate" };
+        int pm = GsGpu_PresentGet();
+        pm = pm < 0 || pm > 3 ? 0 : pm;
+        ImGui::SetNextItemWidth(416.0f);
+        if (ImGui::Combo("Present mode", &pm, kPresent, 4)) {
+            GsGpu_PresentSet(pm);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("How the finished pictures reach the screen.\n"
+                              "FIFO (VSync): no tearing, a little more latency, steadier pace on some devices.\n"
+                              "Mailbox: no tearing, no waiting. Immediate: least latency, may tear.\n"
+                              "A mode the device does not offer falls back to Automatic.");
+    }
+#endif
     {
         bool on = meter_on();
         if (ImGui::Checkbox("Show frame rate, and the connection in an online match", &on)) {
@@ -911,6 +943,24 @@ static void touch_scroll(void) {
     }
 }
 
+#ifdef __ANDROID__
+// "Quit to the launcher": the activity (GameActivity.quitToApp) brings the launcher forward and ends the game's own
+// process, which cannot be started again in place (the engine needs the fixed addresses a fresh process has).
+static void quit_to_app(void) {
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = env != NULL ? (jobject)SDL_GetAndroidActivity() : NULL;
+    jclass cls = act != NULL ? env->GetObjectClass(act) : NULL;
+    jmethodID m = cls != NULL ? env->GetMethodID(cls, "quitToApp", "()V") : NULL;
+    if (m == NULL) {
+        if (env != NULL) { env->ExceptionClear(); }
+        fflush(NULL);
+        _exit(0); /* (no activity to ask: at least the game ends) */
+    }
+    env->CallVoidMethod(act, m);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); }
+}
+#endif
+
 static void build(void) {
     PortVideo v, was;
     ImGuiIO &io = ImGui::GetIO();
@@ -934,7 +984,24 @@ static void build(void) {
             open = false;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Back button: resume");
+        if (ImGui::Button("  Quit to launcher  ")) {
+            ImGui::OpenPopup("Quit to launcher?");
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Back button or START + SELECT: resume");
+        if (ImGui::BeginPopupModal("Quit to launcher?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("The game closes and you go back to the app's menu.");
+            ImGui::TextUnformatted("Progress that has not been saved in the game is lost.");
+            ImGui::Spacing();
+            if (ImGui::Button("Quit", ImVec2(160.0f, 0.0f))) {
+                quit_to_app();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Stay", ImVec2(160.0f, 0.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
         ImGui::Separator();
 #endif
         if (ImGui::BeginTabBar("tabs")) {

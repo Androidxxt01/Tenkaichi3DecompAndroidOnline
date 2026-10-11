@@ -420,6 +420,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** A "Play" icon for the home screen: it starts the game without opening the launcher (PlayShortcutActivity). */
+    fun createPlayShortcut() {
+        val app = getApplication<Application>()
+        if (!androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(app)) {
+            say(str(R.string.shortcut_unsupported))
+            return
+        }
+        val info = androidx.core.content.pm.ShortcutInfoCompat.Builder(app, "play-pinned")
+            .setShortLabel(str(R.string.app_name))
+            .setLongLabel(str(R.string.shortcut_play_long))
+            .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(app, R.mipmap.ic_launcher))
+            .setIntent(
+                android.content.Intent(app, com.dfdx047.dragonrage.PlayShortcutActivity::class.java)
+                    .setAction(android.content.Intent.ACTION_VIEW),
+            )
+            .build()
+        if (androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(app, info, null)) say(str(R.string.shortcut_asked))
+    }
+
     // ---- helpers
 
     private fun str(id: Int, vararg args: Any): String = getApplication<Application>().getString(id, *args)

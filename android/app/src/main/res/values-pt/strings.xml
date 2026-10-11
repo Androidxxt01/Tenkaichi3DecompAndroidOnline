@@ -246,4 +246,18 @@
     <string name="update_check_failed">Não deu para buscar atualização. Veja a conexão.</string>
     <string name="update_failed">Falha na atualização: %1$s</string>
     <string name="update_bad_apk">O arquivo baixado não é uma atualização do Dragon Rage.</string>
+    <string name="clash_title">Clashes de poder</string>
+    <string name="clash_button">Um botão nos clashes</string>
+    <string name="clash_button_text">Num clash de dois raios ou dois combos, aperte repetidamente o botão de soco (Quadrado) em vez de girar o analógico. Vale nos controles na tela e em controle físico. Também no menu do jogo (aba Controls).</string>
+    <string name="touch_layout">Estilo</string>
+    <string name="touch_layout_mobile">Do jogo</string>
+    <string name="touch_layout_classic">Clássico</string>
+    <string name="touch_layout_text">Do jogo: botões para as ações do próprio jogo (alvo, Ki, soco, defesa, dash…) num conjunto pensado para o polegar, com modo menu. Clássico: o controle de console comum (analógicos, direcional, quatro botões, gatilhos). Cada estilo guarda as próprias posições.</string>
+    <string name="shortcut_play_long">Jogar Dragon Rage</string>
+    <string name="shortcut_add">Criar atalho do jogo na tela inicial</string>
+    <string name="shortcut_add_text">Cria na tela inicial um ícone que abre o jogo direto, sem passar pelo app. Segurando o ícone do app também aparece a opção Jogar.</string>
+    <string name="shortcut_asked">Atalho pedido: confirme na janela que o Android mostrar.</string>
+    <string name="shortcut_unsupported">Este launcher não oferece atalhos fixos. Segure o ícone do app: há uma opção Jogar.</string>
+    <string name="touch_auto_mode">Menu / luta automático</string>
+    <string name="touch_auto_mode_text">Botões de menu nos menus e botões de luta na partida, trocados sozinhos. O botão MENU / LUTA na tela continua trocando na mão (para o menu de pausa em uma luta, por exemplo). Só no estilo do jogo.</string>
 </resources>

@@ -247,4 +247,18 @@
     <string name="update_check_failed">Could not check for updates. Check the connection.</string>
     <string name="update_failed">Update failed: %1$s</string>
     <string name="update_bad_apk">The downloaded file is not a Dragon Rage update.</string>
+    <string name="clash_title">Clashes</string>
+    <string name="clash_button">One button in clashes</string>
+    <string name="clash_button_text">In a clash of two beams or two rushes, tap or mash the Square (melee) button instead of turning the stick round. Works with the on-screen controls and with a physical controller. Also in the in-game window (Controls tab).</string>
+    <string name="touch_layout">Layout</string>
+    <string name="touch_layout_mobile">Game-specific</string>
+    <string name="touch_layout_classic">Classic</string>
+    <string name="touch_layout_text">Game-specific: buttons for the game\'s own actions (target, Ki, melee, guard, dash…) in a thumb-friendly cluster, with a menu mode. Classic: the plain console pad (sticks, d-pad, four face buttons, shoulders). Each layout keeps its own placements.</string>
+    <string name="shortcut_play_long">Play Dragon Rage</string>
+    <string name="shortcut_add">Add a Play shortcut to the home screen</string>
+    <string name="shortcut_add_text">Creates an icon on the home screen that starts the game directly, without opening the app. The app icon\'s long-press menu has a Play entry too.</string>
+    <string name="shortcut_asked">Shortcut requested: confirm it in the window that Android shows.</string>
+    <string name="shortcut_unsupported">This launcher does not offer pinned shortcuts. Long-press the app icon: there is a Play entry.</string>
+    <string name="touch_auto_mode">Automatic menu / fight</string>
+    <string name="touch_auto_mode_text">Menu buttons in the menus and fight buttons in a fight, switched by itself. The MENU / FIGHT button on the screen still changes it by hand (for the pause menu in a fight, for example). Game-specific layout only.</string>
 </resources>

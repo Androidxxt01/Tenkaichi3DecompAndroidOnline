@@ -1,9 +1,11 @@
 package com.dfdx047.dragonrage.engine
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -13,13 +15,17 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.SeekBar
 import android.widget.TextView
+import com.dfdx047.dragonrage.MainActivity
 import com.dfdx047.dragonrage.R
 import com.dfdx047.dragonrage.data.GamePaths
 import com.dfdx047.dragonrage.data.GpuDrivers
 import com.dfdx047.dragonrage.touch.PadSkin
 import com.dfdx047.dragonrage.touch.TouchConfig
 import com.dfdx047.dragonrage.touch.TouchMode
-import com.dfdx047.dragonrage.touch.TouchPadView
+import com.dfdx047.dragonrage.touch.TouchListener
+import com.dfdx047.dragonrage.touch.TouchSurface
+import com.dfdx047.dragonrage.touch.createTouchSurface
+import com.dfdx047.dragonrage.touch.view
 import com.dfdx047.dragonrage.touch.TouchStore
 import java.io.File
 import org.libsdl.app.SDLActivity
@@ -30,13 +36,13 @@ import org.libsdl.app.SDLActivity
  * the manifest): the engine needs fixed addresses below 4 GB, which a fresh process has free, and when the game ends
  * its process goes with it and the launcher stays as it was.
  *
- * Over the game's surface: the on-screen controller ([TouchPadView]), which feeds player 1's pad through
+ * Over the game's surface: the on-screen controller ([TouchSurface]: the game-specific layout or the classic one), which feeds player 1's pad through
  * [TouchBridge] and steps aside while the engine's own window (settings, online) is open.
  */
 class GameActivity : SDLActivity() {
     private lateinit var paths: GamePaths
     private lateinit var store: TouchStore
-    private var pad: TouchPadView? = null
+    private var pad: TouchSurface? = null
     private val handler = Handler(Looper.getMainLooper())
 
     private val watchMenu = object : Runnable {
@@ -56,8 +62,8 @@ class GameActivity : SDLActivity() {
 
     private fun addTouchPad() {
         val layout = SDLActivity.getContentView() as? ViewGroup ?: return
-        val view = TouchPadView(this, store.load())
-        view.listener = object : TouchPadView.Listener {
+        val view = createTouchSurface(this, store.load())
+        view.listener = object : TouchListener {
             override fun onPad(buttons: Int, lx: Int, ly: Int, rx: Int, ry: Int) = TouchBridge.setPad(buttons, lx, ly, rx, ry)
 
             override fun onMenu() {
@@ -73,7 +79,7 @@ class GameActivity : SDLActivity() {
                 view.editing = false
             }
         }
-        layout.addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        layout.addView(view.view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         pad = view
     }
 
@@ -186,6 +192,24 @@ class GameActivity : SDLActivity() {
             c.disconnect()
         }
     }.getOrDefault("")
+
+    /**
+     * "Quit to launcher" of the in-game window (port/src/gs/ui.cpp, through JNI on the engine's thread): the launcher
+     * comes forward and the game's own process ends. A game cannot be started again in the same process (the engine
+     * needs the fixed addresses only a fresh one has), so the process goes, as it does when the game is closed.
+     */
+    @Suppress("unused")
+    fun quitToApp() {
+        runOnUiThread {
+            TouchBridge.setPad(0, 128, 128, 128, 128)
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+        // a moment for the launcher to be started, then this process goes (the engine's saves are closed as they are written)
+        Handler(Looper.getMainLooper()).postDelayed({ Process.killProcess(Process.myPid()) }, 450)
+    }
 
     /** The list of where the game's data tables come from (made with the engine, android.py) next to the game's files. */
     private fun installDataList() {

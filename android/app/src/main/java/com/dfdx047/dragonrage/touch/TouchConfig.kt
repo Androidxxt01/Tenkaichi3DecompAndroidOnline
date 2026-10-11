@@ -7,6 +7,9 @@ import org.json.JSONObject
 /** The look of the on-screen controller: which console's buttons it shows. The PS2 buttons behind them are the same. */
 enum class PadSkin { PLAYSTATION, XBOX, NINTENDO }
 
+/** Which layout of the on-screen controller: the game-specific one (0.3.0 and on) or the classic generic pad. */
+enum class TouchLayout { MOBILE, CLASSIC }
+
 /** When the on-screen controller shows: never, until a physical controller is used (and again on a touch), always. */
 enum class TouchMode { OFF, AUTO, ALWAYS }
 
@@ -111,6 +114,9 @@ data class TouchConfig(
     val haptics: Boolean = true,
     val sticksFloat: Boolean = false, // the left stick starts where the thumb lands (within its half of the screen)
     val places: Map<Ctl, Placement> = emptyMap(), // only those moved; the rest at their defaults
+    val layout: TouchLayout = TouchLayout.MOBILE,
+    val autoMode: Boolean = true,   // menu buttons outside a fight, fight buttons in one (the MENU/FIGHT button still overrides)
+    val classicPlaces: Map<String, Placement> = emptyMap(), // the classic layout's own moved controls (by ClassicCtl name)
     val macros: List<Macro> = emptyList(),
 ) {
     fun placeOf(c: Ctl): Placement? = places[c]
@@ -124,6 +130,9 @@ data class TouchConfig(
         put("haptics", haptics)
         put("sticksFloat", sticksFloat)
         put("places", JSONObject().apply { places.forEach { (c, p) -> put(c.name, p.json()) } })
+        put("layout", layout.name)
+        put("autoMode", autoMode)
+        put("classicPlaces", JSONObject().apply { classicPlaces.forEach { (n, p) -> put(n, p.json()) } })
         put("macros", JSONArray().apply {
             macros.forEach { m ->
                 put(JSONObject().apply {
@@ -149,6 +158,10 @@ data class TouchConfig(
                         p.optJSONObject(k)?.let { places[c] = placement(it) }
                     }
                 }
+            }
+            val classic = mutableMapOf<String, Placement>()
+            o.optJSONObject("classicPlaces")?.let { p ->
+                p.keys().forEach { k -> p.optJSONObject(k)?.let { classic[k] = placement(it) } }
             }
             val macros = mutableListOf<Macro>()
             o.optJSONArray("macros")?.let { a ->
@@ -178,6 +191,9 @@ data class TouchConfig(
                 haptics = o.optBoolean("haptics", true),
                 sticksFloat = o.optBoolean("sticksFloat", false),
                 places = places,
+                layout = runCatching { TouchLayout.valueOf(o.optString("layout")) }.getOrDefault(TouchLayout.MOBILE),
+                autoMode = o.optBoolean("autoMode", true),
+                classicPlaces = classic,
                 macros = macros,
             )
         }

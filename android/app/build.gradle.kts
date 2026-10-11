@@ -13,8 +13,13 @@ android {
         minSdk = 29
         targetSdk = 35
         // CI passes the tag (android-v0.1.0 -> 0.1.0) and the run number
-        versionCode = (System.getenv("DR_VERSION_CODE") ?: "1").toInt()
-        versionName = System.getenv("DR_VERSION_NAME") ?: "0.1.0"
+        // Without CI (a local build) the name is 0.4.0 and the code follows it (0.4.0 -> 400), so a local build of
+        // a newer version always installs over the one before it; the same version again installs with `adb install -r`.
+        val vName = System.getenv("DR_VERSION_NAME") ?: "0.4.0"
+        val vParts = vName.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        versionCode = System.getenv("DR_VERSION_CODE")?.toInt()
+            ?: maxOf(1, vParts.getOrElse(0) { 0 } * 10000 + vParts.getOrElse(1) { 0 } * 100 + vParts.getOrElse(2) { 0 })
+        versionName = vName
 
         // The game engine will be arm64 only (see docs: 32-bit pointers lowered for AArch64).
         ndk { abiFilters += listOf("arm64-v8a") }

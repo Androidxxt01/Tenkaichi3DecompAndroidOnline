@@ -23,6 +23,8 @@ typedef struct PortVideo {
 /* gs_draw.c */
 void GsGpu_GetSettings(PortVideo *v);
 void GsGpu_SetSettings(const PortVideo *v); /* applies what changed and saves it */
+int GsGpu_PresentGet(void);   /* gs_gpu.c: how pictures reach the screen: 0 automatic, 1 vsync (FIFO), 2 mailbox, 3 immediate */
+void GsGpu_PresentSet(int mode); /* applied between two frames, saved ('present') */
 /* gs_draw.c: the one window both back ends share (created before the device / the GL context). */
 SDL_Window *GsDraw_WindowCreate(int opengl);
 SDL_Window *GsDraw_Window(void);
@@ -42,6 +44,7 @@ int *PortInput_PadSlot(int player);    /* which connected controller: -1 none, 0
 int *PortInput_OverlayKey(void);       /* the key that opens and closes the settings window (scancode, 0 = none) */
 int *PortInput_OverlayPad(void);       /* the controller button that does (-1 = none; START + SELECT always do) */
 int PortInput_Hotkey(const SDL_Event *ev); /* 1 = the event opens or closes the settings window */
+int PortInput_ComboPoll(void); /* once a frame: 1 = START + SELECT (a pad's, or the on-screen controller's) opens or closes it */
 void PortInput_ResetDefaults(int player);
 void PortInput_Save(void);
 extern int gPortOverlayOpen;   /* the settings window is open: neither keyboard nor controller reaches the game */

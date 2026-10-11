@@ -29,30 +29,22 @@ import kotlin.math.roundToInt
 
 /**
  * The on-screen controller. Draws the controls in the chosen console's look, turns touches into the PS2 pad's
- * buttons and sticks ([Listener.onPad]), plays macros, and in edit mode lets the controls be moved, resized and hidden
- * (with its own small toolbar at the top), handing the changed layout to [Listener.onConfigChanged].
+ * buttons and sticks ([TouchListener.onPad]), plays macros, and in edit mode lets the controls be moved, resized and hidden
+ * (with its own small toolbar at the top), handing the changed layout to [TouchListener.onConfigChanged].
  * The same view is the in-game overlay and the launcher's layout editor.
  */
 @SuppressLint("ViewConstructor")
-class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = false) : View(context) {
+class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = false) : View(context), TouchSurface {
 
-    interface Listener {
-        fun onPad(buttons: Int, lx: Int, ly: Int, rx: Int, ry: Int) {}
-        fun onMenu() {}
-        fun onOptions() {}
-        fun onConfigChanged(config: TouchConfig) {}
-        fun onEditDone() {}
-    }
+    override var listener: TouchListener? = null
 
-    var listener: Listener? = null
-
-    var config: TouchConfig = initial
+    override var config: TouchConfig = initial
         set(v) {
             field = v
             rebuild()
         }
 
-    var editing: Boolean = editing
+    override var editing: Boolean = editing
         set(v) {
             if (field == v) return
             field = v
@@ -71,7 +63,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         }
 
     /** Hidden because a physical controller is in use ([TouchMode.AUTO]); a touch shows it again. */
-    var hiddenForPad = false
+    override var hiddenForPad = false
         set(v) {
             if (field != v) {
                 field = v
@@ -81,7 +73,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         }
 
     /** The game's own menu is open: the controller is not drawn and touches go to the game (the menu). */
-    var suppressed = false
+    override var suppressed = false
         set(v) {
             if (field != v) {
                 field = v
@@ -271,6 +263,36 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         recompute()
     }
 
+    // Automatic menu / fight layout: 0 = no fight is running (menus), anything else is a fight (-1: unknown, which counts
+    // as a fight, as the controls always did). Going to the fight layout is at once; back to the menu layout needs the
+    // state twice in a row (a second), so that a blip does not flip it. The MENU/FIGHT button still works in between.
+    private var autoState = 0 // 0 not known yet, 1 menu, 2 fight
+    private var menuVotes = 0
+
+    private fun autoSwitch(teamSize: Int) {
+        if (teamSize != 0) {
+            menuVotes = 0
+            if (autoState != 2) {
+                autoState = 2
+                setNavigation(false)
+            }
+        } else if (autoState != 1) {
+            if (autoState == 0 || ++menuVotes >= 2) {
+                autoState = 1
+                menuVotes = 0
+                setNavigation(true)
+            }
+        }
+    }
+
+    private fun setNavigation(on: Boolean) {
+        if (navigationMode != on) {
+            navigationMode = on
+            releaseAll()
+            invalidate()
+        }
+    }
+
     private val teamSizePoll = object : Runnable {
         override fun run() {
             if (!isAttachedToWindow) return
@@ -280,6 +302,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     Log.i("bt3", "touch roster: overlay poll teamSize=$current editing=$editing")
                     lastLoggedTeamSize = current
                 }
+                if (config.autoMode) autoSwitch(current)
                 if (current != playerTeamSize) {
                     playerTeamSize = current
                     invalidate()
@@ -764,19 +787,12 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                 stroke.strokeWidth = (if (pressed) 2.2f else 1.35f) * dp
                 c.drawCircle(e.cx, e.cy, r, stroke)
                 if (navigationMode && button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
-                    // In menus, show the actual confirm/cancel legend instead of combat-action artwork.
+                    // In menus the button shows only its own symbol (no captions): the cluster stays clean.
                     if (config.skin == PadSkin.PLAYSTATION) {
-                        psSymbol(c, button, e.cx, e.cy - r * 0.12f, r * 0.36f, a(white, k))
+                        psSymbol(c, button, e.cx, e.cy, r * 0.46f, a(white, k))
                     } else {
-                        label(c, faceLabel(config.skin, button), e.cx, e.cy - r * 0.12f, r * 0.9f, a(white, k))
+                        label(c, faceLabel(config.skin, button), e.cx, e.cy, r * 1.1f, a(white, k))
                     }
-                    val menuLabel = when (button) {
-                        Ctl.CROSS -> "OK"
-                        Ctl.CIRCLE -> "VOLTAR"
-                        Ctl.SQUARE -> "AÇÃO"
-                        else -> "RETORNO"
-                    }
-                    label(c, menuLabel, e.cx, e.cy + r * 0.58f, r * 1.05f, a(white, k))
                 } else if (button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE, Ctl.L3, Ctl.R3, Ctl.BLAST1, Ctl.BLAST2, Ctl.ULTIMATE)) {
                     stroke.color = a(Color.argb(70, 255, 248, 228), k)
                     stroke.strokeWidth = 1f * dp
@@ -809,11 +825,6 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                 c.drawRoundRect(rect, rr, rr, fill)
                 stroke.color = a(if (pressed) Color.WHITE else Color.argb(170, 239, 231, 211), k)
                 c.drawRoundRect(rect, rr, rr, stroke)
-                val utilityLabel = when (ctl) {
-                    Ctl.START -> if (navigationMode) "START" else "PAUSA"
-                    Ctl.SELECT -> if (navigationMode) "VOLTAR" else "ZOOM"
-                    else -> ""
-                }
                 drawUtilityGlyph(c, ctl ?: Ctl.START, e.cx, e.cy, e.h * 0.28f, a(white, k))
             }
             CtlKind.DPAD -> drawDpad(c, e, k)
@@ -879,7 +890,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                     c.drawRect(e.cx - r * 0.3f - bw / 2, e.cy - bh / 2, e.cx - r * 0.3f + bw / 2, e.cy + bh / 2, fill)
                     c.drawRect(e.cx + r * 0.3f - bw / 2, e.cy - bh / 2, e.cx + r * 0.3f + bw / 2, e.cy + bh / 2, fill)
                 } else if (ctl == Ctl.NAV_MODE) {
-                    // Four-way arrow icon; the caption tells the user which layout will be entered.
+                    // Four-way arrow icon; the amber ring says that the menu layout is on (no caption).
                     val arrow = r * 0.62f
                     stroke.color = a(if (navActive) Color.rgb(255, 190, 70) else white, k)
                     stroke.strokeWidth = 2.2f * dp
@@ -897,7 +908,6 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                         path.close()
                         c.drawPath(path, fill)
                     }
-                    label(c, if (navigationMode) "LUTA" else "MENU", e.cx, e.cy + r * 1.42f, r * 1.9f, a(white, k))
                 } else if (ctl == Ctl.TEAM_SELECT) {
                     // Three small roster cards with the centre card highlighted.
                     val cw = r * 0.39f

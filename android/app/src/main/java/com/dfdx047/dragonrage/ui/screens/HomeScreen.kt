@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AddToHomeScreen
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
@@ -84,6 +85,17 @@ fun HomeScreen(vm: AppViewModel) {
             Icon(Icons.Rounded.PlayArrow, null, Modifier.size(30.dp))
             Spacer(Modifier.size(8.dp))
             Text(stringResource(R.string.play), style = MaterialTheme.typography.headlineSmall)
+        }
+        if (installed) {
+            OutlinedButton(onClick = vm::createPlayShortcut, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.AddToHomeScreen, null, Modifier.size(20.dp))
+                Spacer(Modifier.size(8.dp))
+                Text(stringResource(R.string.shortcut_add))
+            }
+            Text(
+                stringResource(R.string.shortcut_add_text),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         SectionCard(stringResource(R.string.game_data), Icons.Rounded.Album) {

@@ -18,8 +18,8 @@
 > [!IMPORTANT]
 > **Status: the whole game runs natively on Android arm64**: menus and full battles at the game's full 30 fps on
 > Snapdragon (AYN Odin 3, Odin 2 Mini) and on Mali GPUs (Anbernic RG Cube, Unisoc T820). On-screen controller,
-> modified ISOs, screen filters (FXAA, AMD FSR 1, Snapdragon GSR) and custom Adreno drivers are in. Next: 60 fps,
-> more devices, quality-of-life features. See [Roadmap](#roadmap).
+> modified ISOs, screen filters (FXAA, AMD FSR 1, Snapdragon GSR) and custom Adreno drivers, smooth motion (60/120), online play and a present-mode selector are in. Next: more devices,
+> quality-of-life features. See [Roadmap](#roadmap).
 
 This repository contains **no game data**. You need your own copy of the **USA release (SLUS-21678)** as an
 `.iso`. The app reads it on your device; nothing is downloaded or uploaded.
@@ -128,14 +128,13 @@ at start, then reset to 0), `dr_fps60` (reserved). The on-screen controller's se
 - [ ] In-game menu in Portuguese; a cleaner layout
 
 ### Next
-- [ ] **60 fps mode.** The game runs its logic at 30 fps (a fight frame waits two vertical blanks); a real 60 fps needs
-      the simulation's timing changed (or frame interpolation)
 - [ ] Picture: anisotropic filtering, SMAA, more post-processing shaders
 - [ ] Quality-of-life features of a "definitive edition" (the game's code is all here to change)
 - [ ] Performance on mobile GPUs; DDS (BC1–BC3) texture packs on GPUs without BC support
-- [ ] Pause/resume when the app goes to the background; save states on arm64 (`port/src/gs/state.c` uses
-      `getcontext`, which Android lacks)
-- [ ] Online play (the PC port has rollback netplay)
+- [ ] Pause/resume when the app goes to the background
+- [x] **Smooth motion** (frame interpolation to 60/120 pictures a second), **present mode** selector, picture shaped to the screen (0.4.0)
+- [x] **Online play** with room codes and rollback, from the PC port (0.4.0; first tests Android to Android)
+- [x] **Controls**: game-specific or classic layout, one button in clashes, Play shortcut (0.4.0)
 
 ## Repository layout
 

@@ -38,7 +38,17 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- the "Play" entry of the app icon's long-press menu -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Starts the game at once: the target of the Play shortcuts (no screen of its own). -->
+        <activity
+            android:name=".PlayShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

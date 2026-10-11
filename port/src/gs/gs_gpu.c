@@ -30,6 +30,7 @@
 static bool sGpuLite; /* the device was made without depth clamping and the other optional features */
 
 extern int Port_Setting(const char *name, int def); /* plat_settings.c: the saved settings */
+extern void Port_SettingSave(const char *name, int value); /* plat_settings.c */
 extern int Port_AspectMilli(void);
 
 static SDL_Window *sWindow; /* the shared window (GsDraw_WindowCreate) */
@@ -353,6 +354,49 @@ static int pipe_get(uint32_t key) {
 
 /* --- init --------------------------------------------------------------------------------------- */
 
+/* The present mode: 0 automatic (mailbox where the device has it, else immediate, else vsync), 1 vsync / FIFO,
+   2 mailbox, 3 immediate; a chosen one the device does not offer falls back to the automatic choice. BT3_PRESENT
+   (testing: vsync, mailbox or immediate) wins over the setting. */
+static int sPresentNow = -1, sPresentWant = -1;
+static SDL_GPUPresentMode present_pick(int want) {
+    SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+    if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
+        mode = SDL_GPU_PRESENTMODE_MAILBOX;
+    } else if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+        mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+    }
+    if (want >= 1 && want <= 3) {
+        SDL_GPUPresentMode w = want == 1 ? SDL_GPU_PRESENTMODE_VSYNC : want == 2 ? SDL_GPU_PRESENTMODE_MAILBOX : SDL_GPU_PRESENTMODE_IMMEDIATE;
+        if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, w)) {
+            mode = w;
+        } else {
+            fprintf(stderr, "bt3: present mode %d is not offered by this device; the automatic choice is used\n", want);
+        }
+    }
+    if (getenv("BT3_PRESENT") != NULL) {
+        const char *m = getenv("BT3_PRESENT");
+        SDL_GPUPresentMode e = m[0] == 'm' ? SDL_GPU_PRESENTMODE_MAILBOX : m[0] == 'i' ? SDL_GPU_PRESENTMODE_IMMEDIATE : SDL_GPU_PRESENTMODE_VSYNC;
+        if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, e)) {
+            mode = e;
+        }
+    }
+    return mode;
+}
+/* The settings window's choice: kept for the next start, and applied between two frames (present_apply). */
+int GsGpu_PresentGet(void) { return sPresentWant >= 0 ? sPresentWant : Port_Setting("present", 0); }
+void GsGpu_PresentSet(int want) {
+    sPresentWant = want < 0 || want > 3 ? 0 : want;
+    Port_SettingSave("present", sPresentWant);
+}
+static void present_apply(void) {
+    if (sDev != NULL && sWindow != NULL && sPresentWant >= 0 && sPresentWant != sPresentNow) {
+        SDL_GPUPresentMode mode = present_pick(sPresentWant);
+        sPresentNow = sPresentWant;
+        SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+        fprintf(stderr, "bt3: present mode %s (changed in the settings)\n", mode == SDL_GPU_PRESENTMODE_MAILBOX ? "mailbox" : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "immediate" : "vsync");
+    }
+}
+
 static int vk_init(void) {
     SDL_GPUBufferCreateInfo bi;
     SDL_GPUTransferBufferCreateInfo ti;
@@ -396,29 +440,9 @@ static int vk_init(void) {
     /* The game paces itself at 30 frames per second; waiting for the display's own refresh on top of that
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
     {
-        SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
-        int want = Port_Setting("present", 0); /* 0 automatic (as below), 1 vsync / FIFO, 2 mailbox, 3 immediate */
-        if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
-            mode = SDL_GPU_PRESENTMODE_MAILBOX;
-        } else if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
-            mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
-        }
-        if (want >= 1 && want <= 3) { /* the one chosen in the settings, where the device has it (vsync always is) */
-            SDL_GPUPresentMode w = want == 1 ? SDL_GPU_PRESENTMODE_VSYNC : want == 2 ? SDL_GPU_PRESENTMODE_MAILBOX : SDL_GPU_PRESENTMODE_IMMEDIATE;
-            if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, w)) {
-                mode = w;
-            } else {
-                fprintf(stderr, "bt3: present mode %d is not offered by this device; the automatic choice is used\n", want);
-            }
-        }
-        if (getenv("BT3_PRESENT") != NULL) { /* (testing: vsync, mailbox or immediate) */
-            const char *m = getenv("BT3_PRESENT");
-            SDL_GPUPresentMode want = m[0] == 'm' ? SDL_GPU_PRESENTMODE_MAILBOX : m[0] == 'i' ? SDL_GPU_PRESENTMODE_IMMEDIATE : SDL_GPU_PRESENTMODE_VSYNC;
-            if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, want)) {
-                mode = want;
-            }
-        }
+        SDL_GPUPresentMode mode = present_pick(Port_Setting("present", 0));
         SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+        sPresentNow = Port_Setting("present", 0);
         fprintf(stderr, "bt3: present mode %s\n", mode == SDL_GPU_PRESENTMODE_MAILBOX ? "mailbox" : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "immediate" : "vsync");
     }
     sVs = shader(kGsVertSpv, sizeof(kGsVertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
@@ -547,6 +571,9 @@ static int vk_init(void) {
 static void poll_events(void) {
     SDL_Event ev;
     GsGpu_TitlePoll();
+    if (PortInput_ComboPoll()) {
+        Ui_Toggle(); /* START + SELECT, held together (also the on-screen controller's two buttons) */
+    }
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
 #ifdef __ANDROID__
@@ -799,6 +826,7 @@ int GsGpu_PauseFrame(void) {
     if (cmd == NULL) {
         return 0;
     }
+    present_apply();
     if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, sWindow, &swap, &sw, &sh) && swap != NULL) {
         show_target(cmd, sLastShown, swap, sw, sh);
         Ui_Draw(cmd, swap);
@@ -1249,6 +1277,7 @@ static void vk_frame_end(void) {
         }
     }
     sEndT[5] = gpu_now();
+    present_apply();
     acquired = SDL_WaitAndAcquireGPUSwapchainTexture(cmd, sWindow, &swap, &sw, &sh);
     sEndT[3] = gpu_now();
 #ifdef __ANDROID__

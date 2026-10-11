@@ -43,11 +43,19 @@ object AppUpdates {
             val v = parse(tag.removePrefix("android-v")) ?: continue
             if (bestV == null || compare(v, bestV) > 0) {
                 bestV = v
-                best = UpdateInfo(tag.removePrefix("android-v"), r.optString("body").trim().take(700), apkUrl, size, false)
+                best = UpdateInfo(tag.removePrefix("android-v"), r.optString("body").trim().take(8000), apkUrl, size, false)
             }
         }
         val mine = parse(currentName) ?: listOf(0)
-        return best?.takeIf { compare(bestV!!, mine) > 0 }
+        val found = best?.takeIf { compare(bestV!!, mine) > 0 } ?: return null
+        // The notes: the version's changelog file in the repository (CHANGELOG-vX.Y.Z.md, as it is at that tag), else
+        // the release's own text.
+        val lang = java.util.Locale.getDefault().language
+        val base = "https://raw.githubusercontent.com/$REPO/android-v${found.version}/CHANGELOG-v${found.version}"
+        suspend fun fetch(url: String) = runCatching { Net.getText(url).trim().take(8000) }.getOrDefault("")
+        val file = (if (lang == "pt") fetch("$base.pt.md") else "").ifBlank { fetch("$base.md") }
+        if (file.isNotBlank()) return found.copy(notes = file)
+        return found
     }
 
     private fun apkAsset(r: JSONObject): Pair<String, Long>? {

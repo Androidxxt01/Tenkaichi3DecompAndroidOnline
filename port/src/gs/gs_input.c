@@ -69,6 +69,7 @@ static int sKeys[2][PORT_ACTIONS], sPadBtn[2][PORT_PAD_BUTTONS], sPadSlot[2];
    window's list; and START + SELECT of any controller together, always. */
 static int sOverlayKey = SDL_SCANCODE_F1, sOverlayPad = -1;
 static int sComboLatch; /* START + SELECT has opened or closed the window and is still held */
+static int sTouchSwallow; /* the on-screen START + SELECT opened the window: its two buttons are not the game's until let go */
 static int sSwallow; /* a controller opened or closed the window: nothing of the controllers reaches the game until those buttons are let go */
 static pthread_once_t sLoadOnce = PTHREAD_ONCE_INIT;
 
@@ -181,6 +182,45 @@ static struct { SDL_JoystickID id; SDL_Gamepad *pad; } sOpen[MAX_PADS];
 static SDL_JoystickID sIds[MAX_PADS];
 static int sIdCount, sInit;
 
+/* START + SELECT, polled once a frame (poll_events, gs_gpu.c), besides the events PortInput_Hotkey sees: it is the
+   one way the on-screen controller can open the window (its buttons are not SDL events), and a physical pad whose
+   second button's "down" event was lost still counts. Once per press of the two, with the events' latch. */
+int PortInput_ComboPoll(void) {
+    int touchStart = (sTouchButtons & 0x0008u) != 0, touchSelect = (sTouchButtons & 0x0001u) != 0;
+    int padStart = 0, padSelect = 0, padBoth = 0, k;
+    pthread_once(&sLoadOnce, load);
+    for (k = 0; k < MAX_PADS; k++) {
+        if (sOpen[k].pad != NULL) {
+            int a = SDL_GetGamepadButton(sOpen[k].pad, SDL_GAMEPAD_BUTTON_START) != 0;
+            int b = SDL_GetGamepadButton(sOpen[k].pad, SDL_GAMEPAD_BUTTON_BACK) != 0;
+            padStart |= a;
+            padSelect |= b;
+            padBoth |= a && b;
+        }
+    }
+    if (!touchStart && !touchSelect) {
+        sTouchSwallow = 0;
+    }
+    if (!touchStart && !touchSelect && !padStart && !padSelect) {
+        sComboLatch = 0; /* (the pads' latch is also cleared by their own button-up events) */
+        return 0;
+    }
+    if (gPortInputCapture || sComboLatch) {
+        return 0;
+    }
+    if (touchStart && touchSelect) {
+        sComboLatch = 1;
+        sTouchSwallow = 1;
+        return 1;
+    }
+    if (padBoth) {
+        sComboLatch = 1;
+        sSwallow = 1;
+        return 1;
+    }
+    return 0;
+}
+
 static void pads_refresh(void) {
     static unsigned calls;
     SDL_JoystickID *ids;
@@ -282,7 +322,7 @@ static unsigned char axis(SDL_Gamepad *g, SDL_GamepadAxis a) {
 
 /* Fills `data` (18 bytes) for controller port `socket`. Returns 0 when there is no window (the caller keeps the
    idle pad). */
-/* "Clashes: Square counts as a direction" (setting clash_square, off by default; BT3_CLASH_SQUARE=1).
+/* "Clashes: Square counts as a direction" (setting clash_square, off by default, on by default on Android; BT3_CLASH_SQUARE=1).
  *
  * In a clash (two beams or two rushes meeting) the game counts one thing: the frames in which a direction is newly
  * pressed (input 51 = BTLC_DIR_P; BtlAct_ClashStruggleHandler and BtlAct_ClashBlowsHandler). Turning the stick is
@@ -304,7 +344,13 @@ static int sClashSquare = -1;
 
 int Port_ClashSquare(void) {
     if (sClashSquare < 0) {
+#ifdef __ANDROID__
+        /* Android: on unless the player turned it off (the launcher's Controls page, or the in-game window): turning a
+           stick round in a clash is awkward on a screen and on a handheld's small sticks, a button to mash is not. */
+        sClashSquare = getenv("BT3_CLASH_SQUARE") != NULL ? atoi(getenv("BT3_CLASH_SQUARE")) != 0 : Port_Setting("clash_square", 1) != 0;
+#else
         sClashSquare = getenv("BT3_CLASH_SQUARE") != NULL ? atoi(getenv("BT3_CLASH_SQUARE")) != 0 : Port_Setting("clash_square", 0) != 0;
+#endif
     }
     return sClashSquare;
 }
@@ -453,7 +499,7 @@ int Port_PadRead(int socket, unsigned char *data) {
     if (socket == 0) {
         btn |= script_buttons();
         if (!gPortInputCapture) {
-            btn |= sTouchButtons;
+            btn |= sTouchSwallow ? (sTouchButtons & ~0x0009u) : sTouchButtons;
             if (sTouchStick[0] != 0x80 || sTouchStick[1] != 0x80) {
                 lx = sTouchStick[0];
                 ly = sTouchStick[1];
