@@ -58,6 +58,7 @@ import com.dfdx047.dragonrage.touch.PadSkin
 import com.dfdx047.dragonrage.touch.Ps2
 import com.dfdx047.dragonrage.touch.TouchConfig
 import com.dfdx047.dragonrage.touch.TouchMode
+import com.dfdx047.dragonrage.touch.PadStyle
 import com.dfdx047.dragonrage.touch.TouchLayout
 import com.dfdx047.dragonrage.touch.TouchListener
 import com.dfdx047.dragonrage.touch.TouchPadView
@@ -116,6 +117,17 @@ fun ControlsScreen(vm: AppViewModel) {
                 onSelect = { vm.updateTouch(c.copy(mode = TouchMode.entries[it])) },
             )
             Text(stringResource(R.string.touch_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (c.layout == TouchLayout.MOBILE) {
+                Text(stringResource(R.string.touch_style), style = MaterialTheme.typography.titleSmall)
+                ChipRow(
+                    options = listOf(
+                        stringResource(R.string.touch_style_dragon) to PadStyle.DRAGON.ordinal,
+                        stringResource(R.string.touch_style_glass) to PadStyle.GLASS.ordinal,
+                    ),
+                    selected = c.style.ordinal,
+                    onSelect = { vm.updateTouch(c.copy(style = PadStyle.entries[it])) },
+                )
+            }
             Text(stringResource(R.string.touch_skin), style = MaterialTheme.typography.titleSmall)
             ChipRow(
                 options = listOf(

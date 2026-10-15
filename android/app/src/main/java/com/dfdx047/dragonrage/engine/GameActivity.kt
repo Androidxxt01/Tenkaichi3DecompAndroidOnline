@@ -57,11 +57,33 @@ class GameActivity : SDLActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         paths = GamePaths(this).also { it.ensure() }
         // the renderer for this start (Vulkan, or OpenGL ES for Mali when automatic): written before the engine reads it
-        runCatching { Renderer.apply(EngineSettings(paths.settings), paths) }
+        runCatching {
+            val es = EngineSettings(paths.settings)
+            Renderer.apply(es, paths)
+            // the in-game menu's language: the launcher's (0 English, 1 Portuguese, 2 Spanish)
+            val lang = when (resources.configuration.locales[0].language) { "pt" -> 1; "es" -> 2; else -> 0 }
+            if (es.get(EngineSettings.LANG, -1) != lang) es.set(EngineSettings.LANG, lang)
+            orientation = es.get(EngineSettings.ORIENTATION, 0)
+        }
+        requestedOrientation = orientationFlag()
         store = TouchStore(paths.root)
         installDataList()
         super.onCreate(savedInstanceState)
         addTouchPad()
+    }
+
+    /** The player's choice (launcher, Settings): 0 landscape, 1 portrait, 2 as the device is held. */
+    private var orientation = 0
+
+    private fun orientationFlag(): Int = when (orientation) {
+        1 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        2 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+        else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    /** SDL picks an orientation from the window's size when it is made; the player's choice wins over it. */
+    override fun setOrientationBis(w: Int, h: Int, resizable: Boolean, hint: String?) {
+        requestedOrientation = orientationFlag()
     }
 
     private fun addTouchPad() {
@@ -179,17 +201,29 @@ class GameActivity : SDLActivity() {
      * way (a room code and the addresses the two games can reach each other at; no game data).
      */
     @Suppress("unused")
-    fun netPost(url: String, body: String): String = runCatching {
+    fun netPost(url: String, body: String): String = netRequest(url, body, "")
+
+    /**
+     * The engine's requests to the matchmaking service (port/src/gs/net_match.c, through JNI on the engine's thread):
+     * a POST of [body], or a GET when it is null; [headers] are extra "Name: value" lines (an official build signs
+     * its requests with them). The answer's text, "" when there is none.
+     */
+    @Suppress("unused")
+    fun netRequest(url: String, body: String?, headers: String?): String = runCatching {
         val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
+            requestMethod = if (body != null) "POST" else "GET"
+            doOutput = body != null
             connectTimeout = 8_000
             readTimeout = 12_000
-            setRequestProperty("Content-Type", "application/json")
+            if (body != null) setRequestProperty("Content-Type", "application/json")
             setRequestProperty("User-Agent", "DragonRage-Android")
+            headers.orEmpty().lineSequence().forEach { line ->
+                val k = line.substringBefore(':', "").trim()
+                if (k.isNotEmpty()) setRequestProperty(k, line.substringAfter(':').trim())
+            }
         }
         try {
-            c.outputStream.use { it.write(body.toByteArray()) }
+            if (body != null) c.outputStream.use { it.write(body.toByteArray()) }
             val code = c.responseCode
             val stream = if (code in 200..299) c.inputStream else c.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
@@ -238,6 +272,29 @@ class GameActivity : SDLActivity() {
                 }
             }
         }
+        // the files the engine reads beside itself (android.py: assets/engine): fonts/ and tbo/ui/, copied when the
+        // app's version changed (or they are missing)
+        val stamp = File(paths.root, ".engine-files")
+        val version = runCatching { packageManager.getPackageInfo(packageName, 0).lastUpdateTime.toString() }.getOrDefault("0")
+        if (!stamp.exists() || stamp.readText() != version) {
+            runCatching {
+                copyAssetTree("engine", paths.root)
+                stamp.writeText(version)
+            }.onFailure { android.util.Log.w("bt3", "engine files: $it") }
+        }
+    }
+
+    private fun copyAssetTree(path: String, into: File) {
+        val names = assets.list(path).orEmpty()
+        if (names.isEmpty()) { // a file
+            val rel = path.substringAfter('/', "")
+            if (rel.isEmpty()) return
+            val out = File(into, rel)
+            out.parentFile?.mkdirs()
+            assets.open(path).use { input -> out.outputStream().use { input.copyTo(it) } }
+            return
+        }
+        names.forEach { copyAssetTree("$path/$it", into) }
     }
 
     /**

@@ -79,9 +79,11 @@ class TexturePacks(private val context: Context, private val paths: GamePaths, p
         try {
             var found = 0
             val others = mutableListOf<String>()
+            val firstNames = mutableListOf<String>()
             val files = try {
                 unzip(input, staging, onBytes = { onProgress(context.getString(R.string.progress_extracting, formatBytes(it))) }, charset = charset) { rel ->
-                    val file = rel.substringAfterLast('/')
+                    val file = rel.substringAfterLast('/').trim()
+                    if (firstNames.size < 3) firstNames += rel
                     if (isReplacement(file)) found++ else if (others.size < 3 && (file.endsWith(".png", true) || file.endsWith(".dds", true))) others += file
                 }
             } catch (e: java.util.zip.ZipException) {
@@ -92,7 +94,8 @@ class TexturePacks(private val context: Context, private val paths: GamePaths, p
                 }
                 throw e
             }
-            Log.i("bt3", "texture import: $files files, $found replacement textures" + if (others.isEmpty()) "" else ", other images: ${others.joinToString()}")
+            Log.i("bt3", "texture import: $files files, $found replacement textures" + (if (others.isEmpty()) "" else ", other images: ${others.joinToString()}") +
+                ", first entries: ${firstNames.joinToString(" | ")}")
             if (files == 0) throw IllegalArgumentException(context.getString(R.string.err_zip_empty))
             if (found == 0) {
                 val msg = context.getString(R.string.err_no_textures)

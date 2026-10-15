@@ -8,7 +8,7 @@
  *
  * Written from the ground up against the canonical OpenGL 3.3 core patterns (learnopengl.com):
  *   - one VAO per vertex layout, configured once with the VBO bound;
- *   - a framebuffer per target: colour (GL_RGBA8) + aux (GL_R8) + depth (GL_DEPTH_COMPONENT32F), complete, and
+ *   - a framebuffer per target: colour (GL_RGBA8) + aux (GL_R8) + depth/stencil (GL_DEPTH32F_STENCIL8), complete, and
  *     used through GL_FRAMEBUFFER;
  *   - depth/colour state set explicitly before every draw, exactly like a pipeline object would be.
  * The GL floor is 3.3 core.
@@ -24,6 +24,7 @@
 #include "ui.h"
 
 extern int Port_AspectMilli(void);
+extern int Port_PageAspectMilli(void); /* plat_stub.c: 4:3 while the menus run, if asked for */
 
 /* Android: OpenGL ES 3.2 (every function used here is in it). What it lacks against desktop GL 3.3: depth clamping
    (GL_EXT_depth_clamp where the driver has it), S3TC (DXT) textures (a texture pack's .dds files are then unpacked to
@@ -61,6 +62,10 @@ typedef void GLvoid; typedef ptrdiff_t GLsizeiptr; typedef ptrdiff_t GLintptr; t
     X(glColorMaski, void, (GLuint, GLboolean, GLboolean, GLboolean, GLboolean), (GLuint, GLboolean, GLboolean, GLboolean, GLboolean)) \
     X(glColorMask, void, (GLboolean, GLboolean, GLboolean, GLboolean), (GLboolean, GLboolean, GLboolean, GLboolean)) \
     X(glDepthFunc, void, (GLenum), (GLenum)) \
+    X(glStencilFunc, void, (GLenum, GLint, GLuint), (GLenum, GLint, GLuint)) \
+    X(glStencilOp, void, (GLenum, GLenum, GLenum), (GLenum, GLenum, GLenum)) \
+    X(glStencilMask, void, (GLuint), (GLuint)) \
+    X(glClearStencil, void, (GLint), (GLint)) \
     X(glDepthMask, void, (GLboolean), (GLboolean)) \
     X(glCreateShader, GLuint, (GLenum), (GLenum)) \
     X(glShaderSource, void, (GLuint, GLsizei, const GLchar *const *, const GLint *), (GLuint, GLsizei, const GLchar *const *, const GLint *)) \
@@ -81,6 +86,9 @@ typedef void GLvoid; typedef ptrdiff_t GLsizeiptr; typedef ptrdiff_t GLintptr; t
     X(glGetUniformBlockIndex, GLuint, (GLuint, const GLchar *), (GLuint, const GLchar *)) \
     X(glUniformBlockBinding, void, (GLuint, GLuint, GLuint), (GLuint, GLuint, GLuint)) \
     X(glBindBufferBase, void, (GLenum, GLuint, GLuint), (GLenum, GLuint, GLuint)) \
+    X(glBindBufferRange, void, (GLenum, GLuint, GLuint, GLintptr, GLsizeiptr), (GLenum, GLuint, GLuint, GLintptr, GLsizeiptr)) \
+    X(glMapBufferRange, void *, (GLenum, GLintptr, GLsizeiptr, GLbitfield), (GLenum, GLintptr, GLsizeiptr, GLbitfield)) \
+    X(glUnmapBuffer, GLboolean, (GLenum), (GLenum)) \
     X(glGenBuffers, void, (GLsizei, GLuint *), (GLsizei, GLuint *)) \
     X(glBindBuffer, void, (GLenum, GLuint), (GLenum, GLuint)) \
     X(glBufferData, void, (GLenum, GLsizeiptr, const void *, GLenum), (GLenum, GLsizeiptr, const void *, GLenum)) \
@@ -121,6 +129,7 @@ GL_FUNCS(GL_DECL)
 #define GL_NO_ERROR 0
 #define GL_COLOR_BUFFER_BIT 0x00004000
 #define GL_DEPTH_BUFFER_BIT 0x00000100
+#define GL_STENCIL_BUFFER_BIT 0x00000400
 #define GL_POINTS 0x0000
 #define GL_LINES 0x0001
 #define GL_TRIANGLES 0x0004
@@ -130,10 +139,12 @@ GL_FUNCS(GL_DECL)
 #define GL_COLOR 0x1800
 #define GL_DEPTH 0x1801
 #define GL_DEPTH_COMPONENT 0x1902
+#define GL_DEPTH_STENCIL 0x84F9
 #define GL_RGBA 0x1908
 #define GL_RGBA8 0x8058
 #define GL_R8 0x8229
-#define GL_DEPTH_COMPONENT32F 0x8CAC
+#define GL_DEPTH32F_STENCIL8 0x8CAD
+#define GL_FLOAT_32_UNSIGNED_INT_24_8_REV 0x8DAD
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE_MIN_FILTER 0x2801
@@ -170,6 +181,7 @@ GL_FUNCS(GL_DECL)
 #define GL_PACK_ALIGNMENT 0x0D05
 #define GL_BLEND 0x0BE2
 #define GL_DEPTH_TEST 0x0B71
+#define GL_STENCIL_TEST 0x0B90
 #define GL_SCISSOR_TEST 0x0C11
 #define GL_CULL_FACE 0x0B44
 #define GL_DEPTH_CLAMP 0x864F
@@ -188,7 +200,10 @@ GL_FUNCS(GL_DECL)
 #define GL_FUNC_REVERSE_SUBTRACT 0x800B
 #define GL_NEVER 0x0200
 #define GL_GREATER 0x0204
+#define GL_EQUAL 0x0202
 #define GL_GEQUAL 0x0206
+#define GL_KEEP 0x1E00
+#define GL_INCR 0x1E02
 #define GL_ALWAYS 0x0207
 #define GL_FRAMEBUFFER 0x8D40
 #define GL_BACK 0x0405
@@ -197,7 +212,7 @@ GL_FUNCS(GL_DECL)
 #define GL_DRAW_FRAMEBUFFER 0x8CA9
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #define GL_COLOR_ATTACHMENT1 0x8CE1
-#define GL_DEPTH_ATTACHMENT 0x8D00
+#define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_INVALID_INDEX 0xFFFFFFFFu
 
@@ -321,8 +336,8 @@ static GLuint make_present_program(void) {
 /* ---- state -------------------------------------------------------------------------------------- */
 static SDL_Window *sWindow;
 static SDL_GLContext sCtx;
-static GLuint sMainProg[4]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag */
-static GLuint sMainProgNd[4]; /* the same with gs.frag without its discards (pipeline key bit 23, as the Vulkan back end) */
+static GLuint sMainProg[8]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag; 4..7: the same with gsnz.frag (key bit 23) */
+static GLuint sMainProgNd[8]; /* the same with the fragment shader without its discards (pipeline key bit 25, as the Vulkan back end) */
 static GLuint sOutlineProg, sKeyProg, sDclutProg, sPresentProg;
 static GLuint sVaoGs, sVaoVu, sVboGs, sVboVu, sIboVu;
 static GLuint sSamplers[16];
@@ -337,7 +352,7 @@ static const char *sGsSamplers[2] = {"tex", "dateTex"};
 static const char *sOneSampler[1] = {"aux"};
 static const char *sDclutSamplers[3] = {"depthTex", "auxTex", "clutTex"};
 
-typedef struct Pipe { uint32_t key, bkey, wmask; int ztst, zwrite, topo, vu, fx, nd; } Pipe;
+typedef struct Pipe { uint32_t key, bkey, wmask; int ztst, zwrite, topo, vu, fx, nd, nz, shadow; } Pipe;
 static Pipe sPipes[1024];
 static int sPipeCount;
 
@@ -357,14 +372,15 @@ static void target_ensure(int i) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, GS_W * SCALE, GS_H * SCALE, 0, GL_RED, GL_UNSIGNED_BYTE, NULL);
     glGenTextures(1, &sTgDep[i]);
     glBindTexture(GL_TEXTURE_2D, sTgDep[i]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, GS_W * SCALE, GS_H * SCALE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH32F_STENCIL8, GS_W * SCALE, GS_H * SCALE, 0,
+                 GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glGenFramebuffers(1, &sTgFbo[i]);
     glBindFramebuffer(GL_FRAMEBUFFER, sTgFbo[i]);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[i], 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, sTgAux[i], 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sTgDep[i], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, sTgDep[i], 0);
     glDrawBuffers(2, bufs);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         fprintf(stderr, "bt3: gl: target %d framebuffer incomplete\n", i);
@@ -443,9 +459,11 @@ static void pipe_decode(Pipe *p, uint32_t key) {
     p->zwrite = (int)((key >> 12) & 1);
     p->topo = (int)((key >> 13) & 3);
     p->vu = (int)((key >> 20) & 3);
+    p->nz = (int)((key >> 23) & 1);
+    p->shadow = (int)((key >> 24) & 1);
     p->fx = (int)((key >> 22) & 1);
     p->wmask = (key >> 16) & 15;
-    p->nd = (int)((key >> 23) & 1);
+    p->nd = (int)((key >> 25) & 1);
 }
 
 static int pipe_get(uint32_t key) {
@@ -496,6 +514,53 @@ static void apply_masks(uint32_t wmask) {
     }
 }
 
+#if GL_ES
+/* The uniform blocks: a fresh slice of a large buffer per draw, written without waiting (unsynchronized) and bound
+   by range. Rewriting one small buffer for every draw (2 000 a fight frame) made a Mali GPU's driver copy or wait
+   on the buffer each time: 2 to 3 pictures a second in a fight with OpenGL ES on a Mali-G52, 60 in the menus.
+   The buffer is given fresh storage at each frame's start (ubo_frame), so nothing the GPU still reads is
+   written over. */
+#define UBO_RING (4 << 20)
+#define GL_MAP_WRITE_BIT 0x0002
+#define GL_MAP_INVALIDATE_RANGE_BIT 0x0004
+#define GL_MAP_UNSYNCHRONIZED_BIT 0x0020
+#define GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT 0x8A34
+static GLint sUboAlign = 256;
+static GLintptr sUboOff[2];
+static void ubo_orphan(GLuint buf) {
+    glBindBuffer(GL_UNIFORM_BUFFER, buf);
+    glBufferData(GL_UNIFORM_BUFFER, UBO_RING, NULL, GL_STREAM_DRAW);
+}
+static void ubo_frame(void) {
+    ubo_orphan(sUboU);
+    ubo_orphan(sUboParams);
+    sUboOff[0] = sUboOff[1] = 0;
+}
+static void ubo_put(int which, GLuint buf, GLuint binding, const void *p, size_t n, size_t block) {
+    GLintptr off = (sUboOff[which] + sUboAlign - 1) / sUboAlign * sUboAlign;
+    void *m;
+    if (off + (GLintptr)block > UBO_RING) {
+        ubo_orphan(buf);
+        off = 0;
+    }
+    glBindBuffer(GL_UNIFORM_BUFFER, buf);
+    m = glMapBufferRange(GL_UNIFORM_BUFFER, off, (GLsizeiptr)n, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+    if (m != NULL) {
+        memcpy(m, p, n);
+        glUnmapBuffer(GL_UNIFORM_BUFFER);
+    } else {
+        glBufferSubData(GL_UNIFORM_BUFFER, off, (GLsizeiptr)n, p);
+    }
+    glBindBufferRange(GL_UNIFORM_BUFFER, binding, buf, off, (GLsizeiptr)block);
+    sUboOff[which] = off + (GLintptr)block;
+}
+static void set_params(const void *p, size_t n) {
+    ubo_put(1, sUboParams, 1, p, n, 80);
+}
+static void set_uniform_u(const Vu0Uniform *u) {
+    ubo_put(0, sUboU, 0, u, sizeof(Vu0Uniform), sizeof(Vu0Uniform));
+}
+#else
 static void set_params(const void *p, size_t n) {
     glBindBuffer(GL_UNIFORM_BUFFER, sUboParams);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, (GLsizeiptr)n, p);
@@ -505,6 +570,7 @@ static void set_uniform_u(const Vu0Uniform *u) {
     glBindBuffer(GL_UNIFORM_BUFFER, sUboU);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(Vu0Uniform), u);
 }
+#endif
 
 static void set_pipe(int pipe) {
     Pipe *p;
@@ -512,24 +578,35 @@ static void set_pipe(int pipe) {
     sCurPipe = pipe;
     p = &sPipes[pipe];
     {
-        GLuint prog = p->fx ? sDclutProg : p->nd && sMainProgNd[p->vu] != 0 ? sMainProgNd[p->vu] : sMainProg[p->vu];
+        int pi = p->vu + (p->nz ? 4 : 0);
+        GLuint prog = p->fx ? sDclutProg : p->nd && sMainProgNd[pi] != 0 ? sMainProgNd[pi] : sMainProg[pi];
         if (sCurProgram != prog) { sCurProgram = prog; glUseProgram(prog); }
     }
     apply_blend(p->bkey);
     apply_masks(p->wmask);
     if (p->fx) {
         glDisable(GL_DEPTH_TEST);
+        glDisable(GL_STENCIL_TEST);
         glDepthMask(GL_FALSE);
     } else {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(p->zwrite ? GL_TRUE : GL_FALSE);
         glDepthFunc(p->ztst == 0 ? GL_NEVER : p->ztst == 1 ? GL_ALWAYS : p->ztst == 2 ? GL_GEQUAL : GL_GREATER);
+        if (p->shadow) {
+            glEnable(GL_STENCIL_TEST);
+            glStencilFunc(GL_EQUAL, 0, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+            glStencilMask(0xff);
+        } else {
+            glDisable(GL_STENCIL_TEST);
+        }
     }
 }
 
 static void set_native(int effect) {
     sCurPipe = -1;
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
     glDepthMask(GL_FALSE);
     if (sHasIndexed) { glEnablei(GL_BLEND, 0); glDisablei(GL_BLEND, 1); } else { glEnable(GL_BLEND); }
     if (effect == 2) {
@@ -604,6 +681,12 @@ static void bind_target(int i, int clear) {
     }
 }
 
+void GsGl_Vsync(int on) { /* the settings window's "V-sync" */
+    if (sCtx != NULL) {
+        SDL_GL_SetSwapInterval(on != 0);
+    }
+}
+
 /* ---- init --------------------------------------------------------------------------------------- */
 /* The renderer cannot start: the context and the window go, so that the other renderer can make its own (gs_draw.c
    tries Vulkan next when the OpenGL one was only chosen in the settings). */
@@ -654,7 +737,7 @@ static int gl_init(void) {
         SDL_GL_SetSwapInterval(Port_Setting("present", 0) == 1 ? 1 : 0);
     }
 #else
-    SDL_GL_SetSwapInterval(0);
+    SDL_GL_SetSwapInterval(Port_Setting("vsync", 0) != 0);
 #endif
     if (getenv("BT3_GL_TRACE") != NULL) { fprintf(stderr, "gl: current, loading the functions\n"); }
     if (!load_gl()) { gl_give_up(); return 0; }
@@ -663,6 +746,10 @@ static int gl_init(void) {
         fprintf(stderr, "bt3: GPU renderer: opengl%s\n", GL_ES ? " es" : "");
     }
     sHasIndexed = glEnablei != NULL && glColorMaski != NULL;
+#if GL_ES
+    glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &sUboAlign);
+    if (sUboAlign <= 0 || sUboAlign > 4096) { sUboAlign = 256; }
+#endif
     /* Depth as the Vulkan back end has it: clip-space z in 0..w stored as z / w, and (SDL GPU's default, depth
        clip off) nothing cut at the near and far planes, the depth clamped to 0..1 instead. */
 #if GL_ES
@@ -692,6 +779,10 @@ static int gl_init(void) {
     sMainProg[1] = make_program(kVu0VertGlsl, kGsFragGlsl, "vu0", sGsSamplers, 2, 0);
     sMainProg[2] = make_program(kVu4VertGlsl, kGsFragGlsl, "vu4", sGsSamplers, 2, 0);
     sMainProg[3] = make_program(kVu6VertGlsl, kGsFragGlsl, "vu6", sGsSamplers, 2, 0);
+    sMainProg[4] = make_program(kGsVertGlsl, kGsnzFragGlsl, "gs nz", sGsSamplers, 2, 0);
+    sMainProg[5] = make_program(kVu0VertGlsl, kGsnzFragGlsl, "vu0 nz", sGsSamplers, 2, 0);
+    sMainProg[6] = make_program(kVu4VertGlsl, kGsnzFragGlsl, "vu4 nz", sGsSamplers, 2, 0);
+    sMainProg[7] = make_program(kVu6VertGlsl, kGsnzFragGlsl, "vu6 nz", sGsSamplers, 2, 0);
     sOutlineProg = make_program(kFxVertGlsl, kOutlineFragGlsl, "outline", sOneSampler, 1, 0);
     sKeyProg = make_program(kFxVertGlsl, kAlphakeyFragGlsl, "alphakey", sOneSampler, 1, 0);
     sDclutProg = make_program(kFxVertGlsl, kDclutFragGlsl, "dclut", sDclutSamplers, 3, 0);
@@ -702,6 +793,10 @@ static int gl_init(void) {
         sMainProgNd[1] = make_program(kVu0VertGlsl, kGsFragGlsl, "vu0-nd", sGsSamplers, 2, 1);
         sMainProgNd[2] = make_program(kVu4VertGlsl, kGsFragGlsl, "vu4-nd", sGsSamplers, 2, 1);
         sMainProgNd[3] = make_program(kVu6VertGlsl, kGsFragGlsl, "vu6-nd", sGsSamplers, 2, 1);
+        sMainProgNd[4] = make_program(kGsVertGlsl, kGsnzFragGlsl, "gs nz-nd", sGsSamplers, 2, 1);
+        sMainProgNd[5] = make_program(kVu0VertGlsl, kGsnzFragGlsl, "vu0 nz-nd", sGsSamplers, 2, 1);
+        sMainProgNd[6] = make_program(kVu4VertGlsl, kGsnzFragGlsl, "vu4 nz-nd", sGsSamplers, 2, 1);
+        sMainProgNd[7] = make_program(kVu6VertGlsl, kGsnzFragGlsl, "vu6 nz-nd", sGsSamplers, 2, 1);
     }
     sPresentProg = make_present_program();
     if (sGlFailed) {
@@ -744,8 +839,11 @@ static int gl_init(void) {
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, sUboU);
     glGenBuffers(1, &sUboParams);
     glBindBuffer(GL_UNIFORM_BUFFER, sUboParams);
-    glBufferData(GL_UNIFORM_BUFFER, 64, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, 80, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, sUboParams);
+#if GL_ES
+    ubo_frame();
+#endif
 
     for (i = 0; i < 16; i++) {
         int lin = (i & 1) != 0;
@@ -769,7 +867,7 @@ static int gl_init(void) {
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glViewport(0, 0, GS_W * SCALE, GS_H * SCALE);
     /* the overlay (F1's settings, the online window) here too: ImGui's OpenGL3 backend, with the context current */
-    if (!Ui_Init(sWindow, NULL, (void *)sCtx)) {
+    if (!Ui_Init(sWindow, NULL, (void *)sCtx, (const char *)glGetString(GL_RENDERER))) {
         fprintf(stderr, "bt3: gl: the settings window is not available\n");
     }
     return 1;
@@ -807,11 +905,16 @@ static void present_picture(int best) {
         glClear(GL_COLOR_BUFFER_BIT);
         glEnable(GL_SCISSOR_TEST);
         if (best >= 0 && gsTargets[best].cleared) {
-            float want = (float)Port_AspectMilli() / 1000.0f;
+            float want = (float)Port_PageAspectMilli() / 1000.0f;
             int w = sw, h = sh, dx, dy;
             if ((float)sw > (float)sh * want) { w = (int)((float)sh * want + 0.5f); } else { h = (int)((float)sw / want + 0.5f); }
             dx = (sw - w) / 2;
             dy = (sh - h) / 2;
+#if GL_ES
+            if (sh > sw + sw / 5) { /* portrait: the picture at the top (GL counts from the bottom) */
+                dy = sh - h - sh / 16;
+            }
+#endif
             if (getenv("BT3_GS_VERBOSE") != NULL) {
                 int ww, wh;
                 SDL_GetWindowSize(sWindow, &ww, &wh);
@@ -851,7 +954,9 @@ static void gl_heartbeat(void) {
     static uint64_t lastNs;
     static unsigned lastBlank, lastFrame;
     uint64_t now;
-    if (gGsFrame % 300 != 0) {
+    extern int gPortInMenus; /* headless.c */
+    extern int Port_Setting(const char *name, int def);
+    if (gGsFrame % 300 != 0 || Port_Setting("perf_log", 1) == 0) {
         return;
     }
     now = SDL_GetTicksNS();
@@ -860,7 +965,7 @@ static void gl_heartbeat(void) {
     if (lastNs != 0 && now > lastNs) {
         double secs = (double)(now - lastNs) / 1e9, bps = (double)(gPortVBlanks - lastBlank) / secs;
         fprintf(stderr, "bt3: speed %.0f%% (%.1f game blanks/s, %.1f pictures/s over %.1f s%s), OpenGL ES\n", bps * 100.0 / 60.0, bps,
-                (double)(gGsFrame - lastFrame) / secs, secs, Ui_Pauses() ? ", the menu was open" : "");
+                (double)(gGsFrame - lastFrame) / secs, secs, Ui_Pauses() ? ", the menu was open" : gPortInMenus ? ", menus" : ", fight");
     }
     lastNs = now;
     lastBlank = gPortVBlanks;
@@ -887,7 +992,7 @@ static void frame_end(void) {
     SDL_Event ev;
     int cur = -1, best = -1, i;
     uint32_t n;
-    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu, lastFu;
+    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } fu, lastFu;
     int haveFu = 0;
 
 #ifdef __ANDROID__
@@ -898,9 +1003,10 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) { exit(0); }
+        { extern void PortA11y_Event(const SDL_Event *ev); PortA11y_Event(&ev); } /* a11y.c: the repeat key and button */
         if (PortInput_Hotkey(&ev)) { Ui_Toggle(); continue; }
         if (Ui_Event(&ev)) { continue; }
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { exit(0); }
+        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { if (!ev.key.repeat && !Ui_QuitAsk()) { exit(0); } /* (asks first) */ }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
             extern int gsInterp;
             extern void Port_SettingSave(const char *name, int value);
@@ -932,6 +1038,24 @@ static void frame_end(void) {
         }
     }
 
+#if GL_ES
+    /* the vertices into fresh storage (the last frame's may still be read by the GPU: rewriting them in place made
+       the driver copy or wait), the uniform blocks likewise (ubo_frame) */
+    ubo_frame();
+    if (gsVertCount != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, sVboGs);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(gsVertCount * sizeof(Vtx)), gsVerts, GL_STREAM_DRAW);
+    }
+    if (gsVuVertCount != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, sVboVu);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(gsVuVertCount * 48), gsVuVerts, GL_STREAM_DRAW);
+    }
+    if (gsVuIdxCount != 0) {
+        glBindVertexArray(sVaoVu);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(gsVuIdxCount * sizeof(uint32_t)), gsVuIdx, GL_STREAM_DRAW);
+        glBindVertexArray(0);
+    }
+#else
     if (gsVertCount != 0) {
         glBindBuffer(GL_ARRAY_BUFFER, sVboGs);
         glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(gsVertCount * sizeof(Vtx)), gsVerts);
@@ -945,6 +1069,7 @@ static void frame_end(void) {
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, (GLsizeiptr)(gsVuIdxCount * sizeof(uint32_t)), gsVuIdx);
         glBindVertexArray(0);
     }
+#endif
     for (i = 0; i < 2; i++) {
         uint32_t *px, x, y, fbp = i ? 0x70 : 0;
         if (!(gGsFbUploads & (1u << i))) { continue; }
@@ -981,6 +1106,7 @@ static void frame_end(void) {
     glEnable(GL_SCISSOR_TEST);
     for (n = 0; n < gsDrawCount; n++) {
         const GsDraw *d = &gsDraws[n];
+        int shadowStart;
         if (d->native >= 100) {
             GLenum one[1] = {GL_COLOR_ATTACHMENT0};
             if (sFbTex[d->native - 100] == 0) { continue; }
@@ -998,7 +1124,10 @@ static void frame_end(void) {
         if (d->native == 5 || d->native == 4) {
             GLuint dst = d->native == 5 ? sDateCopy : sAuxCopy;
             GLenum one[1] = {GL_COLOR_ATTACHMENT0};
+            int rx = 0, ry = 0, rw = GS_W * SCALE, rh = GS_H * SCALE;
             if (!gsTargets[d->target].cleared) { continue; }
+            /* the DATE copy: only what the draws that follow read (gs_draw.c); rows as in the Vulkan back end */
+            if (d->native == 5 && !GsDraw_DateRegion(n, &rx, &ry, &rw, &rh)) { continue; }
             /* The copy of the frame's alpha ids (the outline and the DATE passes read it). glBlitFramebuffer is
                clipped by the scissor test, so with a partial scissor in force (the split screen's halves) only
                part of the alpha would be copied and the outline would draw a stale silhouette; turn it off for
@@ -1010,7 +1139,7 @@ static void frame_end(void) {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sScratchDraw);
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
             glDrawBuffers(1, one);
-            glBlitFramebuffer(0, 0, GS_W * SCALE, GS_H * SCALE, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBlitFramebuffer(rx, ry, rx + rw, ry + rh, rx, ry, rx + rw, ry + rh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glEnable(GL_SCISSOR_TEST);
@@ -1048,6 +1177,9 @@ static void frame_end(void) {
             continue;
         }
         /* an ordinary primitive */
+        shadowStart = sPipes[d->pipeline].shadow &&
+            (n == 0 || gsDraws[n - 1].native || gsDraws[n - 1].target != d->target ||
+             !sPipes[gsDraws[n - 1].pipeline].shadow);
         if (cur != d->target) {
             bind_target(d->target, !gsTargets[d->target].cleared);
             gsTargets[d->target].cleared = 1;
@@ -1058,6 +1190,15 @@ static void frame_end(void) {
         } else if (!gsTargets[d->target].cleared) {
             gsTargets[d->target].cleared = 1;
         }
+        if (shadowStart) {
+            /* One bit per pixel blocks every later triangle of this flat-shadow run. */
+            glDisable(GL_SCISSOR_TEST);
+            glStencilMask(0xff);
+            glClearStencil(0);
+            glClear(GL_STENCIL_BUFFER_BIT);
+            glEnable(GL_SCISSOR_TEST);
+            haveScissor = 0;
+        }
         set_pipe(d->pipeline);
         glBindVertexArray(d->vu ? sVaoVu : sVaoGs);
         if (d->vu) { set_uniform_u(&gsVuUni[d->uniform]); }
@@ -1066,6 +1207,7 @@ static void frame_end(void) {
         memcpy(fu.misc, d->misc, sizeof(fu.misc));
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
+        fu.extra[0] = d->vu ? (gsVuUni[d->uniform].misc[2] > 0.0f ? gsVuUni[d->uniform].misc[2] : 0.0f) : gsZMax;
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             set_params(&fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));
@@ -1084,6 +1226,7 @@ static void frame_end(void) {
     /* the shown buffer: the one sceGsSwapDBuff set up for this frame, else the first target */
     best = gGsMainFbp >= 0 ? GsDraw_TargetGet((uint32_t)gGsMainFbp, 0) : -1;
     for (i = 0; best < 0 && i < gsTargetCount; i++) { best = i; }
+    glDisable(GL_STENCIL_TEST);
     if (best >= 0 && gsTargets[best].cleared) {
         sLastBest = best; /* (shown again while the game is paused: GsGl_PauseFrame) */
     }

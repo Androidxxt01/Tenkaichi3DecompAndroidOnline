@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.DeveloperBoard
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LockOpen
@@ -61,6 +63,21 @@ import com.dfdx047.dragonrage.ui.screens.ModsScreen
 import com.dfdx047.dragonrage.ui.screens.SettingsScreen
 import com.dfdx047.dragonrage.ui.screens.TexturesScreen
 import com.dfdx047.dragonrage.ui.screens.UpdateDialog
+import com.dfdx047.dragonrage.ui.screens.DebugScreen
+import com.dfdx047.dragonrage.ui.screens.DriversScreen
+import com.dfdx047.dragonrage.ui.screens.GpuOfferDialog
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import com.dfdx047.dragonrage.ui.theme.DragonRageTheme
 
 class MainActivity : ComponentActivity() {
@@ -84,6 +101,8 @@ private enum class Dest(val route: String, val label: Int, val icon: ImageVector
     MODS("mods", R.string.nav_mods, Icons.Rounded.Extension),
     CONTROLS("controls", R.string.nav_controls, Icons.Rounded.SportsEsports),
     CHEATS("cheats", R.string.nav_cheats, Icons.Rounded.LockOpen),
+    DRIVERS("drivers", R.string.nav_drivers, Icons.Rounded.DeveloperBoard),
+    DEBUG("debug", R.string.nav_debug, Icons.Rounded.BugReport),
     SETTINGS("settings", R.string.nav_settings, Icons.Rounded.Settings),
 }
 
@@ -100,6 +119,7 @@ private fun DragonRageApp(vm: AppViewModel) {
     // files may have been changed from outside (file manager, adb) while the app was in the background
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshAll(); vm.resumeUpdate() }
     UpdateDialog(vm)
+    GpuOfferDialog(vm)
 
     fun go(d: Dest) = nav.navigate(d.route) {
         popUpTo(nav.graph.findStartDestination().id) { saveState = true }
@@ -126,12 +146,14 @@ private fun DragonRageApp(vm: AppViewModel) {
                 Column {
                     BusyBar(busy)
                     if (!wide) {
-                        NavigationBar(containerColor = colors.surfaceContainer.copy(alpha = 0.92f)) {
-                            Dest.entries.forEach { d ->
-                                NavigationBarItem(
-                                    selected = current == d.route, onClick = { go(d) },
-                                    icon = { Icon(d.icon, null) }, label = { Text(stringResource(d.label), maxLines = 1) },
-                                )
+                        // eight pages: a bar that scrolls sideways when the screen is too narrow for all of them
+                        Surface(color = colors.surfaceContainer.copy(alpha = 0.94f)) {
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                                    .windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 4.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                            ) {
+                                Dest.entries.forEach { d -> BarItem(d, current == d.route) { go(d) } }
                             }
                         }
                     }
@@ -148,9 +170,33 @@ private fun DragonRageApp(vm: AppViewModel) {
                     composable(Dest.MODS.route) { ModsScreen(vm) }
                     composable(Dest.CONTROLS.route) { ControlsScreen(vm) }
                     composable(Dest.CHEATS.route) { CheatsScreen(vm) }
+                    composable(Dest.DRIVERS.route) { DriversScreen(vm) }
+                    composable(Dest.DEBUG.route) { DebugScreen(vm) }
                     composable(Dest.SETTINGS.route) { SettingsScreen(vm) }
                 }
             }
         }
+    }
+}
+
+/** One page of the bottom bar: its icon in a pill that lights when it is the page shown, and its name. */
+@Composable
+private fun BarItem(d: Dest, selected: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier.width(76.dp).clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.clip(RoundedCornerShape(16.dp))
+                .background(if (selected) colors.primary.copy(alpha = 0.22f) else Color.Transparent)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            Icon(d.icon, null, tint = if (selected) colors.primary else colors.onSurfaceVariant, modifier = Modifier.size(24.dp))
+        }
+        Text(
+            stringResource(d.label), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelSmall, color = if (selected) colors.primary else colors.onSurfaceVariant,
+        )
     }
 }

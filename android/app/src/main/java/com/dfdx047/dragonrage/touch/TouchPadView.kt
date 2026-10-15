@@ -7,7 +7,9 @@ import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -96,8 +98,10 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
         var scale: Float,
         var visible: Boolean,
         var opacity: Int = 100,
+        val roundShoulder: Boolean = false, // the Dragon look draws the shoulder buttons as circles
     ) {
-        val round: Boolean get() = kind == CtlKind.BUTTON || kind == CtlKind.STICK_L || kind == CtlKind.STICK_R || kind == CtlKind.SYSTEM || kind == CtlKind.MACRO
+        val round: Boolean get() = kind == CtlKind.BUTTON || kind == CtlKind.STICK_L || kind == CtlKind.STICK_R || kind == CtlKind.SYSTEM ||
+            kind == CtlKind.MACRO || (roundShoulder && kind == CtlKind.SHOULDER)
         fun hit(x: Float, y: Float, slack: Float): Boolean =
             if (round) hypot(x - cx, y - cy) <= w / 2 * slack
             else abs(x - cx) <= w / 2 * slack && abs(y - cy) <= h / 2 * slack
@@ -170,7 +174,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
     private var navigationMode = false
 
     private fun baseSize(kind: CtlKind, size: Float): Pair<Float, Float> = when (kind) {
-        CtlKind.SHOULDER -> size to size * 0.52f
+        CtlKind.SHOULDER -> if (config.style == PadStyle.DRAGON) size * 0.74f to size * 0.74f else size to size * 0.52f
         CtlKind.PILL -> size to size * 0.44f
         else -> size to size
     }
@@ -208,7 +212,8 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             val marginY = max(eh / 2f + 10f * dp, vh * 0.035f).coerceAtMost(vh / 2f)
             val cx = rawX.coerceIn(left + marginX, max(left + marginX, right - marginX))
             val cy = rawY.coerceIn(top + marginY, max(top + marginY, bottom - marginY))
-            els += El(c.name, c, null, c.kind, cx, cy, ew, eh, s, p?.visible ?: c.shownByDefault, p?.opacity ?: 100)
+            els += El(c.name, c, null, c.kind, cx, cy, ew, eh, s, p?.visible ?: c.shownByDefault, p?.opacity ?: 100,
+                roundShoulder = config.style == PadStyle.DRAGON)
         }
         config.macros.forEachIndexed { i, m ->
             val requestedSize = 58f * dp * all * m.place.scale
@@ -760,7 +765,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             val k = if (!e.visible) 0.3f else alpha * (e.opacity / 100f)
             val pressed = e in pressedEls || (e.ctl == Ctl.L3 && oneShotMask != 0) ||
                 (e.kind == CtlKind.MACRO && e.macro?.let { players[it.id]?.held } == true)
-            drawEl(canvas, e, k, pressed)
+            if (config.style == PadStyle.DRAGON) drawDragon(canvas, e, k, pressed) else drawEl(canvas, e, k, pressed)
             if (editing && e === selected) {
                 dash.strokeWidth = 2.5f * dp
                 if (e.round) canvas.drawCircle(e.cx, e.cy, e.w / 2 + 6 * dp, dash)
@@ -882,72 +887,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                 stroke.color = a(Color.argb(58, 255, 248, 229), k)
                 stroke.strokeWidth = 1f * dp
                 c.drawCircle(e.cx, e.cy, r * 0.82f, stroke)
-                stroke.strokeWidth = 2f * dp
-                fill.color = a(white, k)
-                if (ctl == Ctl.MENU) {
-                    val bw = r * 0.18f
-                    val bh = r * 0.8f
-                    c.drawRect(e.cx - r * 0.3f - bw / 2, e.cy - bh / 2, e.cx - r * 0.3f + bw / 2, e.cy + bh / 2, fill)
-                    c.drawRect(e.cx + r * 0.3f - bw / 2, e.cy - bh / 2, e.cx + r * 0.3f + bw / 2, e.cy + bh / 2, fill)
-                } else if (ctl == Ctl.NAV_MODE) {
-                    // Four-way arrow icon; the amber ring says that the menu layout is on (no caption).
-                    val arrow = r * 0.62f
-                    stroke.color = a(if (navActive) Color.rgb(255, 190, 70) else white, k)
-                    stroke.strokeWidth = 2.2f * dp
-                    for (i in 0..3) {
-                        val angle = i * (Math.PI / 2.0)
-                        val dx = kotlin.math.cos(angle).toFloat()
-                        val dy = kotlin.math.sin(angle).toFloat()
-                        c.drawLine(e.cx - dx * arrow * 0.35f, e.cy - dy * arrow * 0.35f,
-                            e.cx + dx * arrow * 0.62f, e.cy + dy * arrow * 0.62f, stroke)
-                        val side = arrow * 0.24f
-                        path.reset()
-                        path.moveTo(e.cx + dx * arrow * 0.62f, e.cy + dy * arrow * 0.62f)
-                        path.lineTo(e.cx + dx * arrow * 0.28f - dy * side, e.cy + dy * arrow * 0.28f + dx * side)
-                        path.lineTo(e.cx + dx * arrow * 0.28f + dy * side, e.cy + dy * arrow * 0.28f - dx * side)
-                        path.close()
-                        c.drawPath(path, fill)
-                    }
-                } else if (ctl == Ctl.TEAM_SELECT) {
-                    // Three small roster cards with the centre card highlighted.
-                    val cw = r * 0.39f
-                    val ch = r * 0.57f
-                    for (i in -1..1) {
-                        val cx = e.cx + i * cw * 0.88f
-                        val card = RectF(cx - cw * 0.42f, e.cy - ch * 0.5f, cx + cw * 0.42f, e.cy + ch * 0.5f)
-                        fill.color = a(if (i == 0) accent else Color.rgb(53, 75, 97), k)
-                        c.drawRoundRect(card, 2f * dp, 2f * dp, fill)
-                        stroke.color = a(if (i == 0) accent else white, k)
-                        stroke.strokeWidth = 1.4f * dp
-                        c.drawRoundRect(card, 2f * dp, 2f * dp, stroke)
-                    }
-                    stroke.color = a(white, k)
-                    stroke.strokeWidth = 1.8f * dp
-                    c.drawLine(e.cx + r * 0.69f, e.cy - r * 0.1f, e.cx + r * 0.69f, e.cy + r * 0.3f, stroke)
-                    path.reset()
-                    path.moveTo(e.cx + r * 0.53f, e.cy + r * 0.17f)
-                    path.lineTo(e.cx + r * 0.69f, e.cy + r * 0.34f)
-                    path.lineTo(e.cx + r * 0.85f, e.cy + r * 0.17f)
-                    path.close()
-                    fill.color = a(white, k)
-                    c.drawPath(path, fill)
-                } else if (ctl == Ctl.TEAM_SWAP) {
-                    // Two opposing arrows mean switch to the selected team member.
-                    stroke.color = a(white, k)
-                    stroke.strokeWidth = 2.5f * dp
-                    stroke.strokeCap = Paint.Cap.ROUND
-                    val ax1 = e.cx - r * 0.53f; val ax2 = e.cx + r * 0.44f
-                    val ay1 = e.cy - r * 0.2f; val ay2 = e.cy + r * 0.2f
-                    c.drawLine(ax1, ay1, ax2, ay1, stroke)
-                    c.drawLine(ax2, ay1, ax2 - r * 0.2f, ay1 - r * 0.17f, stroke)
-                    c.drawLine(ax2, ay1, ax2 - r * 0.2f, ay1 + r * 0.17f, stroke)
-                    c.drawLine(ax2, ay2, ax1, ay2, stroke)
-                    c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 - r * 0.17f, stroke)
-                    c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 + r * 0.17f, stroke)
-                    stroke.strokeCap = Paint.Cap.BUTT
-                } else {
-                    for (i in -1..1) c.drawCircle(e.cx + i * r * 0.42f, e.cy, r * 0.12f, fill)
-                }
+                systemGlyph(c, e, r, k)
             }
             CtlKind.MACRO -> {
                 val r = e.w / 2 * (if (pressed) 0.93f else 1f)
@@ -958,6 +898,330 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
                 c.drawCircle(e.cx, e.cy, r, stroke)
                 drawActionGlyph(c, Ctl.TRIANGLE, e.cx, e.cy - r * 0.12f, r * 0.34f, a(Color.rgb(255, 198, 75), k))
                 if (editing) label(c, e.macro?.name?.take(5) ?: "MACRO", e.cx, e.cy + r * 0.55f, r * 0.9f, a(white, k))
+            }
+        }
+    }
+
+    /** The icons of the round system buttons (menu, layout switch, team), in either look. */
+    private fun systemGlyph(c: Canvas, e: El, r: Float, k: Float) {
+        val ctl = e.ctl
+        val white = if (config.style == PadStyle.DRAGON) gold else Color.rgb(238, 245, 255)
+        val accent = when (ctl) {
+            Ctl.TEAM_SELECT -> Color.rgb(255, 181, 74)
+            Ctl.TEAM_SWAP -> Color.rgb(64, 204, 170)
+            else -> Color.rgb(105, 139, 175)
+        }
+        val navActive = ctl == Ctl.NAV_MODE && navigationMode
+        stroke.strokeWidth = 2f * dp
+        fill.color = a(white, k)
+        if (ctl == Ctl.MENU) {
+            val bw = r * 0.18f
+            val bh = r * 0.8f
+            c.drawRect(e.cx - r * 0.3f - bw / 2, e.cy - bh / 2, e.cx - r * 0.3f + bw / 2, e.cy + bh / 2, fill)
+            c.drawRect(e.cx + r * 0.3f - bw / 2, e.cy - bh / 2, e.cx + r * 0.3f + bw / 2, e.cy + bh / 2, fill)
+        } else if (ctl == Ctl.NAV_MODE) {
+            // Four-way arrow icon; the amber ring says that the menu layout is on (no caption).
+            val arrow = r * 0.62f
+            stroke.color = a(if (navActive) Color.rgb(255, 190, 70) else white, k)
+            stroke.strokeWidth = 2.2f * dp
+            for (i in 0..3) {
+                val angle = i * (Math.PI / 2.0)
+                val dx = kotlin.math.cos(angle).toFloat()
+                val dy = kotlin.math.sin(angle).toFloat()
+                c.drawLine(e.cx - dx * arrow * 0.35f, e.cy - dy * arrow * 0.35f,
+                    e.cx + dx * arrow * 0.62f, e.cy + dy * arrow * 0.62f, stroke)
+                val side = arrow * 0.24f
+                path.reset()
+                path.moveTo(e.cx + dx * arrow * 0.62f, e.cy + dy * arrow * 0.62f)
+                path.lineTo(e.cx + dx * arrow * 0.28f - dy * side, e.cy + dy * arrow * 0.28f + dx * side)
+                path.lineTo(e.cx + dx * arrow * 0.28f + dy * side, e.cy + dy * arrow * 0.28f - dx * side)
+                path.close()
+                c.drawPath(path, fill)
+            }
+        } else if (ctl == Ctl.TEAM_SELECT) {
+            // Three small roster cards with the centre card highlighted.
+            val cw = r * 0.39f
+            val ch = r * 0.57f
+            for (i in -1..1) {
+                val cx = e.cx + i * cw * 0.88f
+                val card = RectF(cx - cw * 0.42f, e.cy - ch * 0.5f, cx + cw * 0.42f, e.cy + ch * 0.5f)
+                fill.color = a(if (i == 0) accent else Color.rgb(53, 75, 97), k)
+                c.drawRoundRect(card, 2f * dp, 2f * dp, fill)
+                stroke.color = a(if (i == 0) accent else white, k)
+                stroke.strokeWidth = 1.4f * dp
+                c.drawRoundRect(card, 2f * dp, 2f * dp, stroke)
+            }
+            stroke.color = a(white, k)
+            stroke.strokeWidth = 1.8f * dp
+            c.drawLine(e.cx + r * 0.69f, e.cy - r * 0.1f, e.cx + r * 0.69f, e.cy + r * 0.3f, stroke)
+            path.reset()
+            path.moveTo(e.cx + r * 0.53f, e.cy + r * 0.17f)
+            path.lineTo(e.cx + r * 0.69f, e.cy + r * 0.34f)
+            path.lineTo(e.cx + r * 0.85f, e.cy + r * 0.17f)
+            path.close()
+            fill.color = a(white, k)
+            c.drawPath(path, fill)
+        } else if (ctl == Ctl.TEAM_SWAP) {
+            // Two opposing arrows mean switch to the selected team member.
+            stroke.color = a(white, k)
+            stroke.strokeWidth = 2.5f * dp
+            stroke.strokeCap = Paint.Cap.ROUND
+            val ax1 = e.cx - r * 0.53f; val ax2 = e.cx + r * 0.44f
+            val ay1 = e.cy - r * 0.2f; val ay2 = e.cy + r * 0.2f
+            c.drawLine(ax1, ay1, ax2, ay1, stroke)
+            c.drawLine(ax2, ay1, ax2 - r * 0.2f, ay1 - r * 0.17f, stroke)
+            c.drawLine(ax2, ay1, ax2 - r * 0.2f, ay1 + r * 0.17f, stroke)
+            c.drawLine(ax2, ay2, ax1, ay2, stroke)
+            c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 - r * 0.17f, stroke)
+            c.drawLine(ax1, ay2, ax1 + r * 0.2f, ay2 + r * 0.17f, stroke)
+            stroke.strokeCap = Paint.Cap.BUTT
+        } else {
+            for (i in -1..1) c.drawCircle(e.cx + i * r * 0.42f, e.cy, r * 0.12f, fill)
+        }
+    }
+
+    // ---- the Dragon look (0.6.0, the default): dark round buttons lit from above, gold icons, coloured letters
+
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val gold = Color.rgb(255, 199, 92)
+    private val goldHot = Color.rgb(255, 226, 140)
+    private val rim = Color.rgb(196, 188, 214)
+
+    /** A dark sphere-like disc: lighter towards the top left, as the buttons in the mock-up. */
+    private fun orb(c: Canvas, x: Float, y: Float, r: Float, k: Float, pressed: Boolean) {
+        val light = if (pressed) Color.rgb(108, 92, 70) else Color.rgb(78, 72, 102)
+        val dark = if (pressed) Color.rgb(40, 30, 22) else Color.rgb(20, 17, 32)
+        shade.shader = RadialGradient(x - r * 0.28f, y - r * 0.38f, r * 1.25f, a(Color.argb(238, Color.red(light), Color.green(light), Color.blue(light)), k),
+            a(Color.argb(238, Color.red(dark), Color.green(dark), Color.blue(dark)), k), Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, r, shade)
+        shade.shader = null
+        stroke.color = a(if (pressed) goldHot else Color.argb(215, Color.red(rim), Color.green(rim), Color.blue(rim)), k)
+        stroke.strokeWidth = max(1.6f * dp, r * (if (pressed) 0.075f else 0.05f))
+        c.drawCircle(x, y, r - stroke.strokeWidth / 2, stroke)
+    }
+
+    /** The small dark disc at the top right with the button's letter (Xbox colours) or symbol. */
+    private fun letterBadge(c: Canvas, ctl: Ctl, x: Float, y: Float, r: Float, k: Float) {
+        val sticker = when (ctl) {
+            Ctl.BLAST1 -> Ctl.CIRCLE
+            Ctl.BLAST2, Ctl.ULTIMATE -> Ctl.TRIANGLE
+            else -> ctl
+        }
+        fill.color = a(Color.argb(235, 18, 15, 26), k)
+        c.drawCircle(x, y, r, fill)
+        val face = sticker in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)
+        val col = if (face && config.skin != PadSkin.NINTENDO) faceColor(config.skin, sticker) else Color.WHITE
+        if (config.skin == PadSkin.PLAYSTATION && face) {
+            psSymbol(c, sticker, x, y, r * 0.45f, a(col, k))
+        } else {
+            val t = faceLabel(config.skin, sticker)
+            label(c, t, x, y, r * (if (t.length > 1) 1.5f else 1.75f), a(col, k))
+        }
+    }
+
+    private fun star(c: Canvas, x: Float, y: Float, r: Float) {
+        path.reset()
+        for (i in 0 until 10) {
+            val ang = -Math.PI / 2 + i * Math.PI / 5
+            val rr = if (i % 2 == 0) r else r * 0.45f
+            val px = x + (kotlin.math.cos(ang) * rr).toFloat()
+            val py = y + (kotlin.math.sin(ang) * rr).toFloat()
+            if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        }
+        path.close()
+        c.drawPath(path, fill)
+    }
+
+    /** The three-star Dragon Ball the stick is held by. */
+    private fun dragonBall(c: Canvas, x: Float, y: Float, r: Float, k: Float, active: Boolean) {
+        shade.shader = RadialGradient(x - r * 0.3f, y - r * 0.35f, r * 1.3f, a(Color.rgb(255, 196, 96), k),
+            a(if (active) Color.rgb(232, 116, 22) else Color.rgb(206, 104, 28), k), Shader.TileMode.CLAMP)
+        c.drawCircle(x, y, r, shade)
+        shade.shader = null
+        fill.color = a(Color.argb(90, 255, 255, 235), k)
+        c.drawCircle(x - r * 0.38f, y - r * 0.42f, r * 0.16f, fill)
+        fill.color = a(Color.rgb(214, 38, 30), k)
+        star(c, x, y - r * 0.30f, r * 0.27f)
+        star(c, x - r * 0.27f, y + r * 0.18f, r * 0.27f)
+        star(c, x + r * 0.27f, y + r * 0.18f, r * 0.27f)
+        if (active) {
+            stroke.color = a(goldHot, k)
+            stroke.strokeWidth = 2f * dp
+            c.drawCircle(x, y, r + 1.5f * dp, stroke)
+        }
+    }
+
+    /** Icons drawn only in the Dragon look; the others come from [drawActionGlyph]. */
+    private fun dragonGlyph(c: Canvas, ctl: Ctl, x: Float, y: Float, r: Float, color: Int) {
+        val oldWidth = stroke.strokeWidth
+        stroke.color = color
+        stroke.strokeWidth = max(1.8f * dp, r * 0.16f)
+        stroke.strokeCap = Paint.Cap.ROUND
+        stroke.strokeJoin = Paint.Join.ROUND
+        fill.color = color
+        when (ctl) {
+            Ctl.CROSS -> { // dash: a comet with its tail
+                c.drawCircle(x + r * 0.30f, y, r * 0.30f, stroke)
+                c.drawLine(x - r * 0.95f, y - r * 0.30f, x - r * 0.10f, y - r * 0.10f, stroke)
+                c.drawLine(x - r * 0.95f, y + r * 0.30f, x - r * 0.10f, y + r * 0.10f, stroke)
+                c.drawLine(x - r * 0.70f, y, x - r * 0.12f, y, stroke)
+                c.drawPoint(x + r * 0.82f, y - r * 0.58f, stroke)
+                c.drawPoint(x + r * 0.82f, y + r * 0.58f, stroke)
+            }
+            Ctl.CIRCLE -> { // guard: a shield with a smaller one inside
+                fun shield(s: Float) {
+                    path.reset()
+                    path.moveTo(x, y - r * 0.82f * s)
+                    path.lineTo(x + r * 0.66f * s, y - r * 0.52f * s)
+                    path.quadTo(x + r * 0.62f * s, y + r * 0.42f * s, x, y + r * 0.86f * s)
+                    path.quadTo(x - r * 0.62f * s, y + r * 0.42f * s, x - r * 0.66f * s, y - r * 0.52f * s)
+                    path.close()
+                }
+                shield(1f)
+                c.drawPath(path, stroke)
+                shield(0.48f)
+                c.drawPath(path, fill)
+            }
+            Ctl.TRIANGLE -> { // Ki blast: an eight-pointed burst
+                path.reset()
+                for (i in 0 until 16) {
+                    val ang = -Math.PI / 2 + i * Math.PI / 8
+                    val rr = if (i % 2 == 0) r * 0.95f else r * 0.42f
+                    val px = x + (kotlin.math.cos(ang) * rr).toFloat()
+                    val py = y + (kotlin.math.sin(ang) * rr).toFloat()
+                    if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                }
+                path.close()
+                c.drawPath(path, fill)
+                fill.color = Color.argb(Color.alpha(color), 30, 24, 40)
+                c.drawCircle(x, y, r * 0.2f, fill)
+            }
+            Ctl.L2 -> { // Ki charge: a flame
+                path.reset()
+                path.moveTo(x, y - r * 0.95f)
+                path.cubicTo(x + r * 0.20f, y - r * 0.45f, x + r * 0.75f, y - r * 0.15f, x + r * 0.62f, y + r * 0.35f)
+                path.cubicTo(x + r * 0.52f, y + r * 0.80f, x - r * 0.52f, y + r * 0.80f, x - r * 0.62f, y + r * 0.35f)
+                path.cubicTo(x - r * 0.70f, y - r * 0.05f, x - r * 0.30f, y - r * 0.25f, x - r * 0.18f, y - r * 0.55f)
+                path.cubicTo(x - r * 0.05f, y - r * 0.35f, x + r * 0.05f, y - r * 0.60f, x, y - r * 0.95f)
+                path.close()
+                c.drawPath(path, fill)
+                fill.color = Color.argb(Color.alpha(color), 30, 24, 40)
+                c.drawOval(x - r * 0.20f, y + r * 0.10f, x + r * 0.20f, y + r * 0.58f, fill)
+            }
+            Ctl.R1, Ctl.R2 -> { // flight: double chevrons up / down
+                val d = if (ctl == Ctl.R1) 1f else -1f
+                for (o in listOf(-0.30f, 0.22f)) {
+                    path.reset()
+                    path.moveTo(x - r * 0.62f, y - d * (o - 0.30f) * r)
+                    path.lineTo(x, y - d * (o + 0.30f) * r)
+                    path.lineTo(x + r * 0.62f, y - d * (o - 0.30f) * r)
+                    c.drawPath(path, stroke)
+                }
+            }
+            else -> drawActionGlyph(c, ctl, x, y, r, color)
+        }
+        stroke.strokeWidth = oldWidth
+        stroke.strokeCap = Paint.Cap.BUTT
+        stroke.strokeJoin = Paint.Join.MITER
+    }
+
+    private fun drawDragon(c: Canvas, e: El, k: Float, pressed: Boolean) {
+        val ctl = e.ctl
+        val icon = a(if (pressed) goldHot else gold, k)
+        when (e.kind) {
+            CtlKind.BUTTON, CtlKind.SHOULDER -> {
+                val button = ctl!!
+                val r = min(e.w, e.h) / 2 * (if (pressed) 0.93f else 1f)
+                orb(c, e.cx, e.cy, r, k, pressed)
+                if (navigationMode && button in listOf(Ctl.CROSS, Ctl.CIRCLE, Ctl.SQUARE, Ctl.TRIANGLE)) {
+                    // menus: the button's own letter or symbol, large, in its colour
+                    val col = a(if (config.skin == PadSkin.NINTENDO) Color.WHITE else faceColor(config.skin, button), k)
+                    if (config.skin == PadSkin.PLAYSTATION) psSymbol(c, button, e.cx, e.cy, r * 0.42f, col)
+                    else label(c, faceLabel(config.skin, button), e.cx, e.cy, r * 1.15f, col)
+                } else if (button == Ctl.SELECT || button == Ctl.START) {
+                    drawUtilityGlyph(c, button, e.cx, e.cy, r * 0.5f, icon)
+                } else {
+                    dragonGlyph(c, button, e.cx, e.cy, r * 0.46f, icon)
+                    letterBadge(c, button, e.cx + r * 0.72f, e.cy - r * 0.72f, r * 0.27f, k)
+                }
+            }
+            CtlKind.PILL -> {
+                rect.set(e.cx - e.w / 2, e.cy - e.h / 2, e.cx + e.w / 2, e.cy + e.h / 2)
+                val rr = e.h / 2
+                shade.shader = RadialGradient(e.cx, e.cy - e.h * 0.4f, e.w * 0.7f, a(Color.argb(235, 78, 72, 102), k),
+                    a(Color.argb(235, 20, 17, 32), k), Shader.TileMode.CLAMP)
+                c.drawRoundRect(rect, rr, rr, shade)
+                shade.shader = null
+                stroke.color = a(if (pressed) goldHot else Color.argb(215, Color.red(rim), Color.green(rim), Color.blue(rim)), k)
+                stroke.strokeWidth = 1.6f * dp
+                c.drawRoundRect(rect, rr, rr, stroke)
+                drawUtilityGlyph(c, ctl ?: Ctl.START, e.cx, e.cy, e.h * 0.28f, icon)
+            }
+            CtlKind.DPAD -> {
+                val s = e.w / 2
+                orb(c, e.cx, e.cy, s, k, false)
+                fill.color = icon
+                val t = s * 0.17f
+                fun tri(dx: Float, dy: Float, on: Boolean) {
+                    val x = e.cx + dx * s * 0.62f
+                    val y = e.cy + dy * s * 0.62f
+                    fill.color = a(if (on) goldHot else gold, k)
+                    if (on) {
+                        shade.color = a(Color.argb(70, 255, 200, 90), k)
+                        c.drawCircle(x, y, t * 2.1f, shade)
+                    }
+                    path.reset()
+                    path.moveTo(x + dx * t, y + dy * t)
+                    path.lineTo(x - dy * t * 0.9f - dx * t * 0.6f, y + dx * t * 0.9f - dy * t * 0.6f)
+                    path.lineTo(x + dy * t * 0.9f - dx * t * 0.6f, y - dx * t * 0.9f - dy * t * 0.6f)
+                    path.close()
+                    c.drawPath(path, fill)
+                }
+                tri(0f, -1f, dpadBits and Ps2.UP != 0)
+                tri(0f, 1f, dpadBits and Ps2.DOWN != 0)
+                tri(-1f, 0f, dpadBits and Ps2.LEFT != 0)
+                tri(1f, 0f, dpadBits and Ps2.RIGHT != 0)
+                fill.color = a(Color.argb(200, 36, 31, 52), k)
+                c.drawCircle(e.cx, e.cy, s * 0.26f, fill)
+            }
+            CtlKind.STICK_L, CtlKind.STICK_R -> {
+                val (sx, sy) = if (e.kind == CtlKind.STICK_L) lx to ly else rx to ry
+                val (ox, oy) = if (e.kind == CtlKind.STICK_L) (floatL ?: (e.cx to e.cy)) else (e.cx to e.cy)
+                val r = e.w / 2f
+                shade.shader = RadialGradient(ox, oy - r * 0.25f, r * 1.1f, a(Color.argb(225, 74, 68, 98), k),
+                    a(Color.argb(225, 22, 18, 34), k), Shader.TileMode.CLAMP)
+                c.drawCircle(ox, oy, r, shade)
+                shade.shader = null
+                stroke.color = a(Color.argb(220, Color.red(rim), Color.green(rim), Color.blue(rim)), k)
+                stroke.strokeWidth = max(1.8f * dp, r * 0.022f)
+                c.drawCircle(ox, oy, r - stroke.strokeWidth / 2, stroke)
+                fill.color = a(gold, k)
+                val mark = r * 0.075f
+                fun arrow(dx: Float, dy: Float) {
+                    val ax = ox + dx * r * 0.80f
+                    val ay = oy + dy * r * 0.80f
+                    path.reset()
+                    path.moveTo(ax + dx * mark, ay + dy * mark)
+                    path.lineTo(ax - dx * mark * 0.72f - dy * mark * 0.85f, ay - dy * mark * 0.72f + dx * mark * 0.85f)
+                    path.lineTo(ax - dx * mark * 0.72f + dy * mark * 0.85f, ay - dy * mark * 0.72f - dx * mark * 0.85f)
+                    path.close()
+                    c.drawPath(path, fill)
+                }
+                arrow(0f, -1f); arrow(1f, 0f); arrow(0f, 1f); arrow(-1f, 0f)
+                val kx = ox + (sx - 128) / 127f * e.w * 0.30f
+                val ky = oy + (sy - 128) / 127f * e.w * 0.30f
+                dragonBall(c, kx, ky, e.w * 0.20f, k, sx != 128 || sy != 128)
+            }
+            CtlKind.SYSTEM, CtlKind.MACRO -> {
+                // the round system buttons keep their own icons (drawn by the other look) over the Dragon disc
+                val r = e.w / 2 * (if (pressed) 0.93f else 1f)
+                orb(c, e.cx, e.cy, r, k, pressed || (ctl == Ctl.NAV_MODE && navigationMode))
+                if (e.kind == CtlKind.MACRO) {
+                    dragonGlyph(c, Ctl.TRIANGLE, e.cx, e.cy - r * 0.12f, r * 0.34f, icon)
+                    if (editing) label(c, e.macro?.name?.take(5) ?: "MACRO", e.cx, e.cy + r * 0.55f, r * 0.9f, a(Color.WHITE, k))
+                } else {
+                    systemGlyph(c, e, r, k)
+                }
             }
         }
     }
@@ -1349,7 +1613,7 @@ class TouchPadView(context: Context, initial: TouchConfig, editing: Boolean = fa
             }
             PadSkin.XBOX -> when (c) {
                 Ctl.CROSS -> "A"; Ctl.CIRCLE -> "B"; Ctl.SQUARE -> "X"; Ctl.TRIANGLE -> "Y"
-                Ctl.L1 -> "LB"; Ctl.L2 -> "LT"; Ctl.R1 -> "RB"; Ctl.R2 -> "RT"; Ctl.L3 -> "LS"; Ctl.R3 -> "RS"
+                Ctl.L1 -> "LB"; Ctl.L2 -> "LT"; Ctl.R1 -> "RB"; Ctl.R2 -> "RT"; Ctl.L3 -> "L3"; Ctl.R3 -> "R3"
                 Ctl.START -> "MENU"; Ctl.SELECT -> "VIEW"
                 else -> ""
             }

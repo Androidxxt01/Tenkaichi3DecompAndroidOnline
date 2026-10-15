@@ -50,12 +50,53 @@ fun Modifier.kiBackground(primary: Color, secondary: Color): Modifier = drawBehi
             radius = size.maxDimension * 0.7f,
         ),
     )
+    fighters(primary)
+}
+
+/**
+ * Two fighters squaring off in the lower corners, with their aura: a faint silhouette behind every screen. Generic
+ * figures (no character of the series is drawn), made of thick round strokes so that they read as shapes.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.fighters(tint: Color) {
+    val h = size.height * 0.34f
+    val w = h * 0.55f
+    val ink = tint.copy(alpha = 0.075f)
+    fun one(cx: Float, base: Float, dir: Float) {
+        val u = h / 10f
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = u * 0.9f, cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        // aura
+        drawOval(
+            Brush.radialGradient(listOf(tint.copy(alpha = 0.06f), Color.Transparent), center = Offset(cx, base - h * 0.5f), radius = h * 0.75f),
+            topLeft = Offset(cx - w * 1.2f, base - h * 1.25f), size = androidx.compose.ui.geometry.Size(w * 2.4f, h * 1.4f),
+        )
+        val hip = Offset(cx, base - u * 4.2f)
+        val neck = Offset(cx + dir * u * 0.6f, base - u * 7.6f)
+        val p = androidx.compose.ui.graphics.Path().apply {
+            // legs in a wide stance
+            moveTo(cx - dir * u * 2.6f, base); lineTo(hip.x - dir * u * 0.4f, hip.y)
+            lineTo(cx + dir * u * 2.2f, base - u * 0.2f)
+            // body
+            moveTo(hip.x, hip.y); lineTo(neck.x, neck.y)
+            // guard: front arm forward, back arm by the chest
+            moveTo(neck.x, neck.y + u * 0.6f); lineTo(neck.x + dir * u * 2.0f, neck.y + u * 1.4f); lineTo(neck.x + dir * u * 3.2f, neck.y + u * 0.4f)
+            moveTo(neck.x, neck.y + u * 0.7f); lineTo(neck.x - dir * u * 0.6f, neck.y + u * 2.3f); lineTo(neck.x + dir * u * 1.1f, neck.y + u * 1.6f)
+        }
+        drawPath(p, ink, style = stroke)
+        drawCircle(ink, radius = u * 1.05f, center = Offset(neck.x + dir * u * 0.3f, neck.y - u * 1.3f))
+    }
+    one(size.width * 0.16f, size.height * 0.995f, 1f)
+    one(size.width * 0.84f, size.height * 0.995f, -1f)
 }
 
 @Composable
 fun ScreenTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
     Column(modifier.padding(horizontal = 4.dp, vertical = 12.dp)) {
         Text(title.uppercase(), style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onBackground)
+        Box(
+            Modifier.padding(top = 2.dp, bottom = 4.dp).size(width = 44.dp, height = 3.dp).clip(CircleShape)
+                .background(Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))),
+        )
         if (subtitle != null) {
             Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

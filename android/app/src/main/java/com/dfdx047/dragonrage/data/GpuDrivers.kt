@@ -37,10 +37,15 @@ class GpuDrivers(context: Context, private val resolver: ContentResolver) {
     }
 
     /** Unpacks a driver zip; returns the driver, or null if the zip has no .so in it. */
-    fun import(uri: Uri): GpuDriver? {
+    fun import(uri: Uri): GpuDriver? = importFrom { resolver.openInputStream(uri) }
+
+    /** The same for a zip (or .adpkg, a zip by another name) already in a file: a downloaded one. */
+    fun importFile(file: File): GpuDriver? = importFrom { file.inputStream() }
+
+    private fun importFrom(open: () -> java.io.InputStream?): GpuDriver? {
         root.mkdirs()
         val tmp = File(root, ".import").also { it.deleteRecursively(); it.mkdirs() }
-        resolver.openInputStream(uri)?.use { input ->
+        open()?.use { input ->
             ZipInputStream(input.buffered()).use { zip ->
                 while (true) {
                     val e = zip.nextEntry ?: break

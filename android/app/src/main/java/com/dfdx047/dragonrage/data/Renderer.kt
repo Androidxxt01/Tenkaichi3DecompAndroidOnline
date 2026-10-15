@@ -8,9 +8,9 @@ import java.io.File
 
 /**
  * Which renderer the game starts with. The engine reads "gpu_api" from its settings (0 Vulkan, 1 OpenGL ES 3.2); the
- * player's choice is "dr_renderer" (0 automatic, 1 Vulkan, 2 OpenGL ES). Automatic: OpenGL ES for Mali GPUs (their
- * OpenGL ES drivers are the mature ones; on weaker Mali the game's many small draws and render-target changes cost
- * less there), Vulkan for everything else (Adreno runs Vulkan very well).
+ * player's choice is "dr_renderer" (0 automatic, 1 Vulkan, 2 OpenGL ES). Automatic: Vulkan (0.6.0; 0.5.0 chose OpenGL
+ * ES for Mali, but a Mali-G52's fights ran at 2 to 3 pictures a second there against about 40 with Vulkan). OpenGL ES
+ * stays for GPUs whose Vulkan driver fails.
  */
 object Renderer {
     const val AUTO = 0
@@ -32,7 +32,7 @@ object Renderer {
     fun gpuApi(choice: Int, gpu: String): Int = when (choice) {
         VULKAN -> 0
         OPENGL -> 1
-        else -> if (isMali(gpu)) 1 else 0
+        else -> 0
     }
 
     /** Writes "gpu_api" from the choice and the GPU (the launcher on start and on a change; the game before it starts). */

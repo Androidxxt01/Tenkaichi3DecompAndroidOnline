@@ -55,6 +55,34 @@ import com.dfdx047.dragonrage.ui.components.SectionCard
 import com.dfdx047.dragonrage.ui.components.StatPill
 import com.dfdx047.dragonrage.ui.theme.Dbz
 import com.dfdx047.dragonrage.ui.theme.TitleStyle
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.LocalCafe
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.SmartDisplay
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
+import com.dfdx047.dragonrage.data.REPO_URL
 
 @Composable
 fun HomeScreen(vm: AppViewModel) {
@@ -75,17 +103,7 @@ fun HomeScreen(vm: AppViewModel) {
         Hero()
 
         val installed = install is InstallState.Installed
-        Button(
-            onClick = vm::play,
-            enabled = installed,
-            modifier = Modifier.fillMaxWidth().height(64.dp),
-            shape = MaterialTheme.shapes.large,
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-        ) {
-            Icon(Icons.Rounded.PlayArrow, null, Modifier.size(30.dp))
-            Spacer(Modifier.size(8.dp))
-            Text(stringResource(R.string.play), style = MaterialTheme.typography.headlineSmall)
-        }
+        PlayButton(enabled = installed, onClick = vm::play)
         if (installed) {
             OutlinedButton(onClick = vm::createPlayShortcut, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Rounded.AddToHomeScreen, null, Modifier.size(20.dp))
@@ -165,6 +183,9 @@ fun HomeScreen(vm: AppViewModel) {
             }
         }
 
+        OnlineCard()
+        Links()
+
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             StatPill(stringResource(R.string.stat_textures), "${packs.count { it.enabled }}", Dbz.SaiyanGold, Modifier.weight(1f))
             StatPill(stringResource(R.string.stat_mods), "${mods.count { it.enabled }}", MaterialTheme.colorScheme.primary, Modifier.weight(1f))
@@ -206,6 +227,119 @@ private fun Hero() {
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+}
+
+/** The Play button: gold to orange, a slow ki aura breathing around it and a gleam passing over it. */
+@Composable
+private fun PlayButton(enabled: Boolean, onClick: () -> Unit) {
+    val t = rememberInfiniteTransition(label = "play")
+    val breath by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "aura")
+    val gleam by t.animateFloat(-0.4f, 1.4f, infiniteRepeatable(tween(2600, easing = LinearEasing)), label = "gleam")
+    val shape = RoundedCornerShape(22.dp)
+    Box(
+        Modifier.fillMaxWidth().height(84.dp).drawBehind {
+            if (!enabled) return@drawBehind
+            // the aura: soft layers of orange and gold, larger as it breathes
+            for (i in 3 downTo 1) {
+                val grow = (6f + 7f * i * (0.6f + 0.4f * breath)).dp.toPx()
+                drawRoundRect(
+                    color = (if (i == 1) Dbz.SaiyanGold else Dbz.GiOrange).copy(alpha = 0.09f + 0.05f * breath / i),
+                    topLeft = Offset(-grow, -grow * 0.6f),
+                    size = androidx.compose.ui.geometry.Size(size.width + grow * 2, size.height + grow * 1.2f),
+                    cornerRadius = CornerRadius(30.dp.toPx() + grow),
+                )
+            }
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.fillMaxSize().clip(shape)
+                .background(
+                    if (enabled) Brush.horizontalGradient(listOf(Dbz.GiOrangeDeep, Dbz.GiOrange, Dbz.BallAmber))
+                    else Brush.horizontalGradient(listOf(Color(0xFF3A3D52), Color(0xFF2E3144))),
+                )
+                .border(2.dp, if (enabled) Dbz.BallLight.copy(alpha = 0.55f) else Color(0x33FFFFFF), shape)
+                .drawBehind {
+                    if (!enabled) return@drawBehind
+                    val x = size.width * gleam
+                    drawRect(
+                        Brush.linearGradient(
+                            0f to Color.Transparent, 0.5f to Color.White.copy(alpha = 0.28f), 1f to Color.Transparent,
+                            start = Offset(x - size.height, 0f), end = Offset(x + size.height, size.height),
+                        ),
+                    )
+                }
+                .clickable(enabled = enabled, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(46.dp).clip(CircleShape).background(Color(0x33000000)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.PlayArrow, null, Modifier.size(34.dp), tint = Color.White) }
+                Spacer(Modifier.width(14.dp))
+                Text(
+                    stringResource(R.string.play).uppercase(),
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Black),
+                    color = if (enabled) Color(0xFF2A1300) else Color(0xFF9A9CB0),
+                )
+            }
+        }
+    }
+}
+
+/** How online works and what to do when it fails, in a dialog. */
+@Composable
+private fun OnlineCard() {
+    var open by remember { mutableStateOf(false) }
+    SectionCard(stringResource(R.string.online_title), Icons.Rounded.Public, accent = Dbz.KiBlue) {
+        Text(stringResource(R.string.online_short), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = { open = true }) { Text(stringResource(R.string.online_help_button)) }
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text(stringResource(R.string.online_title)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.online_how_title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.online_how), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.online_fail_title), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.online_fail), style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false }) { Text(stringResource(R.string.close)) } },
+        )
+    }
+}
+
+private data class LinkItem(val label: String, val url: String, val icon: ImageVector, val color: Color)
+
+/** Small round links: the channel, the community, support, and the code. */
+@Composable
+private fun Links() {
+    val uri = LocalUriHandler.current
+    val links = listOf(
+        LinkItem("YouTube", "https://www.youtube.com/@DFDX47", Icons.Rounded.SmartDisplay, Color(0xFFFF3B30)),
+        LinkItem("Discord", "https://discord.gg/6XXxT547Qx", Icons.Rounded.Forum, Color(0xFF7289FF)),
+        LinkItem("Ko-fi", "https://ko-fi.com/dfdx047", Icons.Rounded.LocalCafe, Color(0xFF29ABE0)),
+        LinkItem("GitHub", REPO_URL, Icons.Rounded.Code, Color(0xFFE6E8F0)),
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        links.forEach { l ->
+            Column(
+                Modifier.clip(RoundedCornerShape(14.dp)).clickable { runCatching { uri.openUri(l.url) } }.padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(l.color.copy(alpha = 0.14f)).border(1.dp, l.color.copy(alpha = 0.45f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(l.icon, l.label, tint = l.color, modifier = Modifier.size(22.dp)) }
+                Spacer(Modifier.height(4.dp))
+                Text(l.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

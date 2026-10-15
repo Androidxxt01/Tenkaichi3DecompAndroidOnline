@@ -153,7 +153,7 @@ def cxx_source(f):
     o = OBJ / ("cxx_" + f.stem + ".o")
     imgui = ROOT / "port/third_party/imgui"
     r = run([str(LLVM / "bin/clang++")] + TARGET + ["-std=c++17", "-c", "-O2", "-g1", "-fPIE", "-fno-exceptions", "-fno-rtti", "-w", "-DBT3_ANDROID=1",
-                                                   f"-I{imgui}", f"-I{ROOT / 'port/src/gs'}", f"-I{SDL3 / 'include'}", str(f), "-o", str(o)])
+                                                   f"-I{imgui}", f"-I{ROOT / 'port/src/gs'}", f"-I{GEN / 'gs'}", f"-I{SDL3 / 'include'}", str(f), "-o", str(o)])
     return (o if r.returncode == 0 else None), f.name, r.stderr
 
 
@@ -162,7 +162,13 @@ def shaders():
     gen = GEN / "gs"
     gen.mkdir(parents=True, exist_ok=True)
     arrays = []
-    for src in sorted((ROOT / "port/src/gs/shaders").glob("*.*")):
+    # gsnz.frag: gs.frag without its depth output (NO_FRAG_DEPTH), for the draws that do not need it (undefined.py)
+    nz = gen / "gsnz.frag"
+    nz_text = (ROOT / "port/src/gs/shaders/gs.frag").read_text().replace("\n", "\n#define NO_FRAG_DEPTH\n", 1)
+    if not nz.exists() or nz.read_text() != nz_text:
+        nz.write_text(nz_text)
+    sources = sorted((ROOT / "port/src/gs/shaders").glob("*.*")) + [nz]
+    for src in sources:
         stage = src.suffix[1:]
         name = "k" + src.stem.capitalize() + stage.capitalize() + "Spv"
         spv = gen / (src.name + ".spv")
@@ -171,19 +177,24 @@ def shaders():
             print("FAILED shader", src.name, r.stderr[:300])
             continue
         arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in spv.read_bytes()) + "};\n")
-    # gs.frag a second time without its discards (the draws that never discard; gs_gpu.c, key bit 23)
-    spv = gen / "gs_nd.frag.spv"
-    r = run([GLSLC, "-fshader-stage=frag", "-DGS_NO_DISCARD=1", str(ROOT / "port/src/gs/shaders/gs.frag"), "-o", str(spv)])
-    if r.returncode:
-        print("FAILED shader gs.frag (no discard)", r.stderr[:300])
-    else:
-        arrays.append("static const unsigned char kGsNdFragSpv[] = {" + ",".join(str(b) for b in spv.read_bytes()) + "};\n")
-    for src in sorted((ROOT / "port/src/gs/shaders").glob("*")):
+    # gs.frag and gsnz.frag a second time without their discards (the draws that never discard; gs_gpu.c, key bit 25)
+    for src, out, arr in ((ROOT / "port/src/gs/shaders/gs.frag", "gs_nd.frag.spv", "kGsNdFragSpv"), (nz, "gsnz_nd.frag.spv", "kGsnzNdFragSpv")):
+        spv = gen / out
+        r = run([GLSLC, "-fshader-stage=frag", "-DGS_NO_DISCARD=1", str(src), "-o", str(spv)])
+        if r.returncode:
+            print("FAILED shader", out, "(no discard)", r.stderr[:300])
+        else:
+            arrays.append(f"static const unsigned char {arr}[] = {{" + ",".join(str(b) for b in spv.read_bytes()) + "};\n")
+    for src in sources:
         if src.suffix in (".vert", ".frag"):
             name = "k" + src.stem.capitalize() + src.suffix[1:].capitalize() + "Glsl"
             data = src.read_bytes() + b"\0"
             arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in data) + "};\n")
     (gen / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/android.py */\n" + "".join(arrays))
+    # the side bars' two pictures (port/assets/bars), as bytes in the program (undefined.py)
+    bars = "".join(f"static const unsigned char kBars{n.capitalize()}Png[] = {{" + ",".join(str(b) for b in (ROOT / "port/assets/bars" / (n + ".png")).read_bytes()) + "};\n"
+                   for n in ("trim", "fill"))
+    (gen / "bars_png.h").write_text("/* generated from port/assets/bars by port/tools/android.py */\n" + bars)
 
 
 def compile_all():
@@ -306,7 +317,7 @@ def state_list(exe):
             return p.stem[3:] in STATE_PORT
         return True
 
-    ranges, others, out = [], [], None
+    ranges, others, out, marks = [], [], None, {}
     line_re = re.compile(r"^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+) (.*)$")
     for l in pathlib.Path(str(exe) + ".map").read_text(errors="replace").splitlines():
         m = line_re.match(l)
@@ -318,6 +329,8 @@ def state_list(exe):
         if level == 0:
             out = name  # an output section
             continue
+        if level > 8 and name in ("gPortResim", "gPortVBlanks"):
+            marks[name] = int(m.group(1), 16)  # which program the list belongs to (state.c compares them)
         if level != 8 or out is None or not out.startswith(STATE_WRITABLE) or out.startswith(".data.rel.ro"):
             continue
         addr, size = int(m.group(1), 16), int(m.group(3), 16)
@@ -332,7 +345,10 @@ def state_list(exe):
             merged[-1][1] = max(merged[-1][1], b)
         else:
             merged.append([a, b])
-    pathlib.Path(str(exe) + ".mem").write_text("".join(f"{a:x} {b - a:x}\n" for a, b in merged))
+    if len(marks) != 2:
+        sys.exit("state list: gPortResim / gPortVBlanks are not in the map")
+    head = f"0 {marks['gPortResim']:x}\n1 {marks['gPortVBlanks']:x}\n"
+    pathlib.Path(str(exe) + ".mem").write_text(head + "".join(f"{a:x} {b - a:x}\n" for a, b in merged))
     print(f"state list: {len(merged)} ranges of game variables, {sum(b - a for a, b in merged):,} bytes -> {exe.name}.mem")
 
 
@@ -548,6 +564,13 @@ def install():
         shutil.copy(str(EXE) + ".rel", assets / "libbt3.so.rel")
     if pathlib.Path(str(EXE) + ".mem").exists():
         shutil.copy(str(EXE) + ".mem", assets / "libbt3.so.mem")
+    # the files the engine reads beside itself (the app copies them into the game folder, GameActivity): the fonts of
+    # its list (menu_text.c: fonts/fonts.tsv) and the pictures of the online screens (gs_draw.c: tbo/ui)
+    eng = assets / "engine"
+    if eng.exists():
+        shutil.rmtree(eng)
+    shutil.copytree(ROOT / "port/third_party/fonts", eng / "fonts", ignore=shutil.ignore_patterns("*.txt", "LICENSE*", "OFL*"))
+    shutil.copytree(ROOT / "port/tbo/ui", eng / "tbo/ui", ignore=shutil.ignore_patterns("*.md"))
     java = SDL3 / "java/org"
     if java.exists():
         shutil.copytree(java, APP / "java/org", dirs_exist_ok=True)

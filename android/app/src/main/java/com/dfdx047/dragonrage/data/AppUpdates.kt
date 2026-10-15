@@ -53,7 +53,7 @@ object AppUpdates {
         val lang = java.util.Locale.getDefault().language
         val base = "https://raw.githubusercontent.com/$REPO/android-v${found.version}/CHANGELOG-v${found.version}"
         suspend fun fetch(url: String) = runCatching { Net.getText(url).trim().take(8000) }.getOrDefault("")
-        val file = (if (lang == "pt") fetch("$base.pt.md") else "").ifBlank { fetch("$base.md") }
+        val file = (if (lang == "pt" || lang == "es") fetch("$base.$lang.md") else "").ifBlank { fetch("$base.md") }
         if (file.isNotBlank()) return found.copy(notes = file)
         return found
     }

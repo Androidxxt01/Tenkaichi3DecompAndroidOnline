@@ -793,6 +793,18 @@ JNIEXPORT jint JNICALL Java_com_dfdx047_dragonrage_engine_TouchBridge_nativePlay
     memcpy(&count1, (const void *)(work + 0x330), sizeof(count1));
     memcpy(&control1, (const void *)(work + 0x538), sizeof(control1));
 
+    {   /* the menus running (headless.c): the story mode's map, its talks and the screens after a fight leave the
+           last fight's BattleWork as it was ("running" still 1), and the controller stayed in its fight layout */
+        static volatile int *inMenus;
+        static int looked;
+        if (!looked) {
+            inMenus = (volatile int *)dlsym(sEngine, "gPortInMenus");
+            looked = 1;
+        }
+        if (inMenus != NULL && *inMenus) {
+            running = 0;
+        }
+    }
     if (running != 1) {
         result = 0; /* no active battle: don't show team controls in menus */
         source = "idle";

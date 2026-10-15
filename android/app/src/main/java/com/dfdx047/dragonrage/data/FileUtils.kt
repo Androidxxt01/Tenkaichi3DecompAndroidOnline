@@ -86,7 +86,7 @@ suspend fun unzip(
                 }
             }
             files++
-            onEntry(out.relativeTo(canonicalDest).path)
+            onEntry(name) // (the entry's own path in the zip, '/'-separated: its last part is the file's name)
         }
     }
     return files

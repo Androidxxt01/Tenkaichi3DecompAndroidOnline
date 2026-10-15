@@ -7,6 +7,12 @@ import org.json.JSONObject
 /** The look of the on-screen controller: which console's buttons it shows. The PS2 buttons behind them are the same. */
 enum class PadSkin { PLAYSTATION, XBOX, NINTENDO }
 
+/**
+ * How the controls are drawn: DRAGON (0.6.0 and on, the default) dark round buttons with gold icons and coloured
+ * letter badges, a Dragon Ball for the stick; GLASS the translucent look of 0.3.0 to 0.5.0.
+ */
+enum class PadStyle { DRAGON, GLASS }
+
 /** Which layout of the on-screen controller: the game-specific one (0.3.0 and on) or the classic generic pad. */
 enum class TouchLayout { MOBILE, CLASSIC }
 
@@ -108,7 +114,8 @@ data class Macro(
 
 data class TouchConfig(
     val mode: TouchMode = TouchMode.AUTO,
-    val skin: PadSkin = PadSkin.PLAYSTATION,
+    val skin: PadSkin = PadSkin.XBOX,
+    val style: PadStyle = PadStyle.DRAGON,
     val opacity: Int = 70,          // %
     val scale: Float = 1f,          // all controls
     val haptics: Boolean = true,
@@ -125,6 +132,7 @@ data class TouchConfig(
         put("version", 2)
         put("mode", mode.name)
         put("skin", skin.name)
+        put("style", style.name)
         put("opacity", opacity)
         put("scale", scale.toDouble())
         put("haptics", haptics)
@@ -186,6 +194,7 @@ data class TouchConfig(
             return TouchConfig(
                 mode = runCatching { TouchMode.valueOf(o.optString("mode")) }.getOrDefault(TouchMode.AUTO),
                 skin = runCatching { PadSkin.valueOf(o.optString("skin")) }.getOrDefault(PadSkin.PLAYSTATION),
+                style = runCatching { PadStyle.valueOf(o.optString("style")) }.getOrDefault(PadStyle.DRAGON),
                 opacity = o.optInt("opacity", 70).coerceIn(10, 100),
                 scale = o.optDouble("scale", 1.0).toFloat().coerceIn(0.5f, 2f),
                 haptics = o.optBoolean("haptics", true),

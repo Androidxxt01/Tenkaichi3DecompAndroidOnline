@@ -27,6 +27,12 @@ import com.dfdx047.dragonrage.data.GameDataInstaller
 import com.dfdx047.dragonrage.data.GamePaths
 import com.dfdx047.dragonrage.data.GpuDriver
 import com.dfdx047.dragonrage.data.GpuDrivers
+import com.dfdx047.dragonrage.data.GpuProfiles
+import com.dfdx047.dragonrage.data.DriverAsset
+import com.dfdx047.dragonrage.data.DriverRelease
+import com.dfdx047.dragonrage.data.DriverSource
+import com.dfdx047.dragonrage.data.DriverSources
+import com.dfdx047.dragonrage.data.PerfReport
 import com.dfdx047.dragonrage.data.LogExport
 import com.dfdx047.dragonrage.data.ImportResult
 import com.dfdx047.dragonrage.data.InstallState
@@ -154,11 +160,89 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The GPU's name as its OpenGL ES driver gives it ("" until known). */
     val gpuName: StateFlow<String> = _gpuName.asStateFlow()
 
+    // ---- the GPU's tier and its settings (offered once; again from the Debug page)
+
+    private val _gpuOffer = MutableStateFlow<GpuProfiles.Profile?>(null)
+    /** Recommended settings for this GPU waiting for the player's yes or no (a dialog). */
+    val gpuOffer: StateFlow<GpuProfiles.Profile?> = _gpuOffer.asStateFlow()
+
+    fun gpuProfile(): GpuProfiles.Profile? = GpuProfiles.profile(_gpuName.value)
+
+    fun offerGpuProfile() {
+        val p = gpuProfile()
+        if (p == null) say(str(R.string.gpu_unknown_tier, _gpuName.value.ifEmpty { "?" })) else _gpuOffer.value = p
+    }
+
+    fun acceptGpuOffer() = viewModelScope.launch(Dispatchers.IO) {
+        val p = _gpuOffer.value ?: return@launch
+        _gpuOffer.value = null
+        GpuProfiles.apply(p, settings)
+        _settings.value = settings.snapshot()
+        say(str(R.string.gpu_applied))
+    }
+
+    fun declineGpuOffer() = viewModelScope.launch(Dispatchers.IO) {
+        val p = _gpuOffer.value ?: return@launch
+        _gpuOffer.value = null
+        if (settings.get(EngineSettings.GPU_TIER, -1) == -1) settings.set(EngineSettings.GPU_TIER, -2 - p.tier) // (asked: not again)
+        _settings.value = settings.snapshot()
+    }
+
+    // ---- the last run's numbers (Debug page)
+
+    private val _perf = MutableStateFlow<PerfReport?>(null)
+    val perf: StateFlow<PerfReport?> = _perf.asStateFlow()
+
+    fun refreshPerf() = viewModelScope.launch(Dispatchers.IO) { _perf.value = runCatching { PerfReport.read(paths) }.getOrNull() }
+
+    // ---- drivers from their authors' GitHub releases (Drivers page)
+
+    sealed interface DriverList {
+        data object Loading : DriverList
+        data object Failed : DriverList
+        data class Loaded(val releases: List<DriverRelease>) : DriverList
+    }
+
+    private val _driverLists = MutableStateFlow<Map<DriverSource, DriverList>>(emptyMap())
+    val driverLists: StateFlow<Map<DriverSource, DriverList>> = _driverLists.asStateFlow()
+
+    fun loadDrivers(source: DriverSource, again: Boolean = false) {
+        val now = _driverLists.value[source]
+        if (!again && (now is DriverList.Loaded || now is DriverList.Loading)) return
+        _driverLists.value = _driverLists.value + (source to DriverList.Loading)
+        viewModelScope.launch {
+            val r = runCatching { DriverSources.releases(source) }
+            _driverLists.value = _driverLists.value + (source to (r.getOrNull()?.let { DriverList.Loaded(it) } ?: DriverList.Failed))
+        }
+    }
+
+    fun downloadDriver(asset: DriverAsset) = work(str(R.string.busy_driver_download)) {
+        paths.temp.mkdirs()
+        val file = java.io.File(paths.temp, "driver-${System.currentTimeMillis()}.zip")
+        try {
+            Net.download(asset.url, file) { done, total ->
+                setDetail(str(R.string.progress_downloading, formatBytes(done)) + if (total > 0) " / ${formatBytes(total)}" else "")
+            }
+            if (!Net.looksLikeZip(file)) throw IOException(str(R.string.err_download_not_zip))
+            val d = drivers.importFile(file) ?: throw IOException(str(R.string.driver_bad_zip))
+            drivers.select(d.id)
+            _drivers.value = drivers.list()
+            _driver.value = d.id
+            say(str(R.string.driver_imported, d.name))
+        } finally {
+            file.delete()
+        }
+    }
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             _gpuName.value = runCatching { Renderer.gpuName(paths) }.getOrDefault("")
             runCatching { Renderer.apply(settings, paths) }
             _settings.value = settings.snapshot()
+            // the GPU's recommended settings, offered once (GpuProfiles)
+            val p = GpuProfiles.profile(_gpuName.value)
+            if (p != null && settings.get(EngineSettings.GPU_TIER, -1) == -1) _gpuOffer.value = p
+            _perf.value = runCatching { PerfReport.read(paths) }.getOrNull()
         }
     }
 

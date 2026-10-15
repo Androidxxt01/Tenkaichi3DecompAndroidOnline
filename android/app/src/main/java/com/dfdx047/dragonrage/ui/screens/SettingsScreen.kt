@@ -108,6 +108,19 @@ fun SettingsScreen(vm: AppViewModel) {
                 stringResource(R.string.aspect_hint),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(stringResource(R.string.orientation), style = MaterialTheme.typography.titleSmall)
+            ChipRow(
+                options = listOf(
+                    stringResource(R.string.orientation_landscape) to 0, stringResource(R.string.orientation_portrait) to 1,
+                    stringResource(R.string.orientation_sensor) to 2,
+                ),
+                selected = get(EngineSettings.ORIENTATION, 0),
+                onSelect = { vm.setting(EngineSettings.ORIENTATION, it) },
+            )
+            Text(
+                stringResource(R.string.orientation_text),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             ToggleRow(stringResource(R.string.show_fps), stringResource(R.string.show_fps_text), get(EngineSettings.METER, 0) != 0) {
                 vm.setting(EngineSettings.METER, if (it) 1 else 0)
             }
@@ -157,6 +170,12 @@ fun SettingsScreen(vm: AppViewModel) {
                 stringResource(R.string.renderer_text),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            ToggleRow(stringResource(R.string.frag_depth), stringResource(R.string.frag_depth_text), get(EngineSettings.FRAG_DEPTH, 1) != 0) {
+                vm.setting(EngineSettings.FRAG_DEPTH, if (it) 1 else 0)
+            }
+            ToggleRow(stringResource(R.string.frame_skip), stringResource(R.string.frame_skip_text), get(EngineSettings.FRAME_SKIP, 1) != 0) {
+                vm.setting(EngineSettings.FRAME_SKIP, if (it) 1 else 0)
+            }
             Text(stringResource(R.string.fps60), style = MaterialTheme.typography.titleSmall)
             ChipRow(
                 options = listOf(stringResource(R.string.off) to 0, "60" to 1, "120" to 2),
@@ -181,8 +200,6 @@ fun SettingsScreen(vm: AppViewModel) {
             )
         }
 
-        GpuDriverCard(vm)
-        LogCard(vm)
 
         SectionCard(stringResource(R.string.appearance), Icons.Rounded.Palette, accent = MaterialTheme.colorScheme.tertiary) {
             Text(stringResource(R.string.theme), style = MaterialTheme.typography.titleSmall)
@@ -194,9 +211,9 @@ fun SettingsScreen(vm: AppViewModel) {
             if (vm.canPickLanguage) {
                 Text(stringResource(R.string.language), style = MaterialTheme.typography.titleSmall)
                 var lang by remember { mutableStateOf(vm.language()) }
-                val langs = listOf("", "en", "pt")
+                val langs = listOf("", "en", "pt", "es")
                 ChipRow(
-                    options = listOf(stringResource(R.string.lang_system) to 0, "English" to 1, "Português" to 2),
+                    options = listOf(stringResource(R.string.lang_system) to 0, "English" to 1, "Português" to 2, "Español" to 3),
                     selected = langs.indexOfFirst { it.isNotEmpty() && lang.startsWith(it) }.coerceAtLeast(0),
                     onSelect = { lang = langs[it]; vm.setLanguage(langs[it]) },
                 )
