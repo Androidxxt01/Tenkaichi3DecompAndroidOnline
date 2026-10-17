@@ -23,13 +23,13 @@
 ---
 
 > [!IMPORTANT]
-> **Status (0.7.1): o jogo inteiro roda nativamente no Android arm64**: menus, modo história e lutas completas nos
+> **Status (0.7.2): o jogo inteiro roda nativamente no Android arm64**: menus, modo história e lutas completas nos
 > 30 fps do jogo, em Snapdragon e em GPUs Mali, Xclipse e PowerVR. O launcher agora **detecta sua GPU** e sugere
 > configurações pensadas para manter as lutas em 30 fps estáveis; já estão incluídos o modo online (PC e Android nas
 > mesmas salas), pacotes de texturas HD, um novo menu dentro do jogo feito para toque, o novo controle na tela **Dragão**
 > e **download de drivers** para Adreno. A 0.7.0 traz a versão 0.1.36 do port de PC (o online volta a funcionar), um
 > **aviso da situação do online** no launcher, a página **Dragon Net Battle** feita para toque, pacotes de textura em
-> ASTC. Em inglês, português e espanhol. Veja o [Roadmap](#roadmap).
+> ASTC (experimental). Em inglês, português e espanhol. Veja o [Roadmap](#roadmap).
 
 Este repositório **não contém nenhum dado do jogo**. Você precisa da sua própria cópia da **versão americana (SLUS-21678)**
 em `.iso`. O app lê o arquivo no seu aparelho; nada é baixado nem enviado.
@@ -134,6 +134,8 @@ opcional `match_url.txt` (uma linha, `https://...`) aponta outro serviço de mat
       jogo fechou
 - [x] **0.7.1**: framebuffer fetch desligado de novo (blocos pretos e GPU travada em Mali-G52 com OpenGL ES), aviso
       ao escolher OpenGL ES numa Mali
+- [x] **0.7.2**: pacotes de textura em ASTC desligados por padrão (experimental): as lutas voltam ao código de motor
+      da 0.6.0
 
 ### Próximos passos
 - [ ] Nosso próprio serviço de matchmaking (o do port para PC tem limites diários e códigos para versões assinadas)

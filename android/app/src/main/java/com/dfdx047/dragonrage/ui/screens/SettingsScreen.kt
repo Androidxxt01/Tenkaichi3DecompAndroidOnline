@@ -179,7 +179,7 @@ fun SettingsScreen(vm: AppViewModel) {
             ToggleRow(stringResource(R.string.frag_depth), stringResource(R.string.frag_depth_text), get(EngineSettings.FRAG_DEPTH, 1) != 0) {
                 vm.setting(EngineSettings.FRAG_DEPTH, if (it) 1 else 0)
             }
-            ToggleRow(stringResource(R.string.astc), stringResource(R.string.astc_text), get(EngineSettings.ASTC, 1) != 0) {
+            ToggleRow(stringResource(R.string.astc), stringResource(R.string.astc_text), get(EngineSettings.ASTC, 0) != 0) {
                 vm.setting(EngineSettings.ASTC, if (it) 1 else 0)
             }
             ToggleRow(stringResource(R.string.frame_skip), stringResource(R.string.frame_skip_text), get(EngineSettings.FRAME_SKIP, 1) != 0) {

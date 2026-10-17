@@ -362,6 +362,6 @@
     <string name="err_mod_incompatible">Esta imagem de disco foi modificada de um jeito que o Dragon Rage não consegue rodar (o DBZP.BIN dela é menor do que o jogo precisa). Use um dump americano sem modificações (SLUS-21678).</string>
     <string name="err_copy_short">%1$s não foi copiado por completo (armazenamento cheio ou o arquivo não pôde ser lido). Libere espaço e importe de novo.</string>
     <string name="astc">Pacotes de textura em ASTC</string>
-    <string name="astc_text">Guarda uma cópia comprimida das imagens dos pacotes de textura no formato que as GPUs de celular leem (Mali, Adreno…), feita em segundo plano na primeira vez que cada uma é usada: um quarto da memória e lutas mais lisas com pacotes HD.</string>
+    <string name="astc_text">Experimental, desligado por padrão. Guarda uma cópia comprimida das imagens dos pacotes de textura no formato que as GPUs de celular leem (Mali, Adreno…), feita pela CPU em segundo plano na primeira vez que cada uma é usada: menos memória, mas a conversão usa CPU enquanto você joga.</string>
     <string name="renderer_mali_gl">Nas GPUs Mali o OpenGL ES é várias vezes mais lento nas lutas que o Vulkan (numa Mali-G52: cerca de 4 quadros por segundo contra 12 a 26, com o jogo na velocidade certa). Use Automático, a não ser que o Vulkan não abra neste celular.</string>
 </resources>

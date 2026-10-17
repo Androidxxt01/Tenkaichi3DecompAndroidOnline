@@ -363,6 +363,6 @@
     <string name="err_mod_incompatible">This disc image is modified in a way Dragon Rage cannot run (its DBZP.BIN is smaller than the game needs). Use an unmodified USA dump (SLUS-21678).</string>
     <string name="err_copy_short">%1$s was not copied completely (storage full or the file could not be read). Free some space and import again.</string>
     <string name="astc">ASTC texture packs</string>
-    <string name="astc_text">Keeps a compressed copy of texture-pack images in the format phone GPUs read (Mali, Adreno…), made in the background the first time each is used: a quarter of the memory and smoother fights with HD packs.</string>
+    <string name="astc_text">Experimental, off by default. Keeps a compressed copy of texture-pack images in the format phone GPUs read (Mali, Adreno…), made on the CPU in the background the first time each is used: less memory, but the conversion takes CPU time while you play.</string>
     <string name="renderer_mali_gl">On Mali GPUs OpenGL ES is several times slower in fights than Vulkan (a Mali-G52: about 4 pictures a second against 12 to 26, with the game at full speed). Use Automatic unless Vulkan does not start on this phone.</string>
 </resources>

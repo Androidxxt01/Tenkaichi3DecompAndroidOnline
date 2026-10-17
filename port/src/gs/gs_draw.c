@@ -95,7 +95,8 @@ int gsTargetCount;
 int gsTexCount;
 extern int gGsNoBcTextures; /* gs_gl.c: the OpenGL ES renderer without DXT textures */
 int gGsAstcTextures; /* the back end takes ASTC 4x4 textures (gs_gpu.c, gs_gl.c) */
-int gGsAstcOn = 1;   /* the setting "astc": texture pack replacements kept as ASTC copies (gs_astc.cpp) */
+int gGsAstcOn;       /* the setting "astc" (off by default since 0.7.2: the conversion runs on the CPU while the game plays):
+                        texture pack replacements kept as ASTC copies (gs_astc.cpp) */
 #ifdef __ANDROID__
 extern int GsAstc_Load(const char *src, TexPackImage *img);
 extern void GsAstc_Queue(const char *src);
@@ -2011,7 +2012,7 @@ int GsGpu_Init(void) {
     MenuText_SetFontId(Port_Setting("menu_font_id", 0));
     MenuText_SetBattleFontId(Port_Setting("battle_font_id", 0));
     MenuText_SetSharedFontId(Port_Setting("text_font_id", 0));
-    gGsAstcOn = getenv("BT3_ASTC") != NULL ? atoi(getenv("BT3_ASTC")) != 0 : Port_Setting("astc", 1) != 0;
+    gGsAstcOn = getenv("BT3_ASTC") != NULL ? atoi(getenv("BT3_ASTC")) != 0 : Port_Setting("astc", 0) != 0;
     gGsFragDepth = getenv("BT3_FRAG_DEPTH") != NULL ? atoi(getenv("BT3_FRAG_DEPTH")) != 0 : Port_Setting("frag_depth", 1) != 0;
     sTexPackOn = Port_Setting("texture_pack", 1) != 0;
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
