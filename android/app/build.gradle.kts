@@ -13,13 +13,18 @@ android {
         minSdk = 29
         targetSdk = 35
         // CI passes the tag (android-v0.1.0 -> 0.1.0) and the run number
-        // Without CI (a local build) the name is 0.6.0 and the code follows it (0.6.0 -> 600), so a local build of
+        // Without CI (a local build) the name is 0.7.0 and the code follows it (0.7.0 -> 700), so a local build of
         // a newer version always installs over the one before it; the same version again installs with `adb install -r`.
-        val vName = System.getenv("DR_VERSION_NAME") ?: "0.6.0"
+        val vName = System.getenv("DR_VERSION_NAME") ?: "0.7.0"
         val vParts = vName.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
         versionCode = System.getenv("DR_VERSION_CODE")?.toInt()
             ?: maxOf(1, vParts.getOrElse(0) { 0 } * 10000 + vParts.getOrElse(1) { 0 } * 100 + vParts.getOrElse(2) { 0 })
         versionName = vName
+        // the PC release the engine is (port/src/port_release.h): the launcher's online status compares it with what
+        // the matchmaking service asks for
+        val portRelease = rootProject.file("../port/src/port_release.h").takeIf { it.exists() }?.readLines()
+            ?.firstOrNull { it.startsWith("#define PORT_RELEASE ") }?.substringAfter("#define PORT_RELEASE ")?.trim()?.toIntOrNull() ?: 0
+        buildConfigField("int", "PORT_RELEASE", portRelease.toString())
 
         // The game engine will be arm64 only (see docs: 32-bit pointers lowered for AArch64).
         ndk { abiFilters += listOf("arm64-v8a") }

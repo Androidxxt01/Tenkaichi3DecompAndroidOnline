@@ -75,6 +75,7 @@ class EngineSettings(private val file: File) {
         const val LANG = "dr_lang"                // the in-game menu's language: 0 English, 1 Portuguese, 2 Spanish (written at start)
         const val ORIENTATION = "dr_orient"       // the game's screen: 0 landscape, 1 portrait, 2 as the device is held
         const val FRAG_DEPTH = "frag_depth"       // precise depth (the fragment shader writes depth): 1 on, 0 off (faster)
+        const val ASTC = "astc"                   // texture packs kept as ASTC copies (textures_astc) where the GPU reads ASTC
         const val FRAME_SKIP = "frame_skip"       // skip pictures instead of slowing down
         const val GPU_TIER = "dr_gpu_tier"        // the GPU's tier the launcher's optimisations were made for (GpuProfiles)
         const val TOUCH = "dr_touch"              // on-screen controls: 0 off, 1 automatic, 2 always

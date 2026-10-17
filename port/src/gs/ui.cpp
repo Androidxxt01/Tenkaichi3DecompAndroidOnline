@@ -722,7 +722,14 @@ static void quick_status(int state, int &lastState, const char *name) {
     }
 }
 
+#ifdef __ANDROID__
+static void build_net_android(void); /* ui_android.inc: the same window for touch, in the launcher's look */
+#endif
 static void build_net(void) {
+#ifdef __ANDROID__
+    build_net_android();
+    return;
+#endif
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
     static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3, speed = -1;
     static bool useCode = true;       // host with a room code (no port forwarding) or on a port

@@ -94,6 +94,12 @@ GsTarget gsTargets[MAX_TARGETS];
 int gsTargetCount;
 int gsTexCount;
 extern int gGsNoBcTextures; /* gs_gl.c: the OpenGL ES renderer without DXT textures */
+int gGsAstcTextures; /* the back end takes ASTC 4x4 textures (gs_gpu.c, gs_gl.c) */
+int gGsAstcOn = 1;   /* the setting "astc": texture pack replacements kept as ASTC copies (gs_astc.cpp) */
+#ifdef __ANDROID__
+extern int GsAstc_Load(const char *src, TexPackImage *img);
+extern void GsAstc_Queue(const char *src);
+#endif
 /* How many decoded textures are kept. When full, all not used for two seconds go in one sweep. The game keeps
    rewriting its texture memory, so in a fight the count climbs by hundreds every few seconds: on Android a smaller
    cache keeps the GPU memory lower (phones share it with everything else) and each sweep shorter (a sweep of
@@ -443,9 +449,19 @@ static GsTex texture_get(int ctx) {
     /* a texture pack's replacement for this texture, if there is one (gs_texpack.c) */
     if (sTexPackOn && TexPack_Count() != 0) {
         const char *path = TexPack_Lookup(tbp, tbw, psm, tw, th, (uint32_t)((t0 >> 34) & 1), cbp, cpsm, &packMaxAlpha);
-        if (path != NULL && TexPack_Load(path, &pack)) {
-            packFormat = pack.format & 3;
-            if (packFormat != GS_TEXFMT_RGBA8 && gGsNoBcTextures) {
+#ifdef __ANDROID__
+        int astc = path != NULL && GsAstc_Load(path, &pack); /* gs_astc.cpp: this GPU's ASTC copy, if one was made */
+#else
+        int astc = 0;
+#endif
+        if (path != NULL && (astc || TexPack_Load(path, &pack))) {
+            packFormat = pack.format;
+#ifdef __ANDROID__
+            if (!astc && gGsAstcTextures && (packFormat == GS_TEXFMT_RGBA8 || gGsNoBcTextures)) {
+                GsAstc_Queue(path); /* an ASTC copy for the next time, made in the background */
+            }
+#endif
+            if (packFormat != GS_TEXFMT_RGBA8 && packFormat != GS_TEXFMT_ASTC4 && gGsNoBcTextures) {
                 /* A GPU without DXT (phones): the .dds replacement is unpacked to RGBA here, once per load, with its
                    levels above 2048 pixels left out on Android (memory); failing that the game's own texture is shown */
 #ifdef __ANDROID__
@@ -1995,6 +2011,7 @@ int GsGpu_Init(void) {
     MenuText_SetFontId(Port_Setting("menu_font_id", 0));
     MenuText_SetBattleFontId(Port_Setting("battle_font_id", 0));
     MenuText_SetSharedFontId(Port_Setting("text_font_id", 0));
+    gGsAstcOn = getenv("BT3_ASTC") != NULL ? atoi(getenv("BT3_ASTC")) != 0 : Port_Setting("astc", 1) != 0;
     gGsFragDepth = getenv("BT3_FRAG_DEPTH") != NULL ? atoi(getenv("BT3_FRAG_DEPTH")) != 0 : Port_Setting("frag_depth", 1) != 0;
     sTexPackOn = Port_Setting("texture_pack", 1) != 0;
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;

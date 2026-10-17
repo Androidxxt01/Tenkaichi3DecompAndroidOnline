@@ -83,6 +83,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import com.dfdx047.dragonrage.data.REPO_URL
+import com.dfdx047.dragonrage.data.OnlineState
+import com.dfdx047.dragonrage.data.OnlineStatus
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.rounded.Refresh
 
 @Composable
 fun HomeScreen(vm: AppViewModel) {
@@ -101,6 +107,7 @@ fun HomeScreen(vm: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Hero()
+        OnlineBanner(vm)
 
         val installed = install is InstallState.Installed
         PlayButton(enabled = installed, onClick = vm::play)
@@ -183,7 +190,6 @@ fun HomeScreen(vm: AppViewModel) {
             }
         }
 
-        OnlineCard()
         Links()
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -291,13 +297,42 @@ private fun PlayButton(enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** How online works and what to do when it fails, in a dialog. */
+/**
+ * The state of online play, large, at the top of Home: what the matchmaking service says of this build right now
+ * (working, needs the next update, official PC releases only, no answer), how online works, and the help dialog.
+ */
 @Composable
-private fun OnlineCard() {
+private fun OnlineBanner(vm: AppViewModel) {
+    val state by vm.online.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
-    SectionCard(stringResource(R.string.online_title), Icons.Rounded.Public, accent = Dbz.KiBlue) {
-        Text(stringResource(R.string.online_short), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick = { open = true }) { Text(stringResource(R.string.online_help_button)) }
+    val (color, title, text) = when (val st = state) {
+        OnlineState.Checking -> Triple(MaterialTheme.colorScheme.outline, stringResource(R.string.online_checking), "")
+        OnlineState.Unreachable -> Triple(MaterialTheme.colorScheme.outline, stringResource(R.string.online_unreachable_title), stringResource(R.string.online_unreachable))
+        is OnlineState.Outdated -> Triple(MaterialTheme.colorScheme.error, stringResource(R.string.online_outdated_title),
+            stringResource(R.string.online_outdated, OnlineStatus.release(st.min), OnlineStatus.release(st.mine)))
+        is OnlineState.OfficialOnly -> Triple(Dbz.GiOrange, stringResource(R.string.online_official_title), stringResource(R.string.online_official))
+        is OnlineState.Working -> Triple(Dbz.ShenronGreen, stringResource(R.string.online_ok_title),
+            stringResource(R.string.online_ok, OnlineStatus.release(st.mine)) +
+                (if (st.searching > 0) " " + stringResource(R.string.online_searching, st.searching) else ""))
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.13f)),
+        border = androidx.compose.foundation.BorderStroke(1.5.dp, color.copy(alpha = 0.6f)),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(12.dp).clip(CircleShape).background(color))
+                Spacer(Modifier.width(10.dp))
+                Text(stringResource(R.string.online_banner_title).uppercase(), style = MaterialTheme.typography.labelLarge, color = color, modifier = Modifier.weight(1f))
+                IconButton(onClick = { vm.checkOnline() }) { Icon(Icons.Rounded.Refresh, stringResource(R.string.drivers_refresh)) }
+            }
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            if (text.isNotEmpty()) Text(text, style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.online_explain), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilledTonalButton(onClick = { open = true }) { Text(stringResource(R.string.online_help_button)) }
+        }
     }
     if (open) {
         AlertDialog(

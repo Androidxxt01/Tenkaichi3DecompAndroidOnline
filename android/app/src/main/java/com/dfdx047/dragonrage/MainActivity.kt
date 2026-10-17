@@ -66,6 +66,7 @@ import com.dfdx047.dragonrage.ui.screens.UpdateDialog
 import com.dfdx047.dragonrage.ui.screens.DebugScreen
 import com.dfdx047.dragonrage.ui.screens.DriversScreen
 import com.dfdx047.dragonrage.ui.screens.GpuOfferDialog
+import com.dfdx047.dragonrage.ui.screens.LastRunDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -117,9 +118,10 @@ private fun DragonRageApp(vm: AppViewModel) {
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     // files may have been changed from outside (file manager, adb) while the app was in the background
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshAll(); vm.resumeUpdate() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshAll(); vm.resumeUpdate(); vm.checkLastRun() }
     UpdateDialog(vm)
     GpuOfferDialog(vm)
+    LastRunDialog(vm)
 
     fun go(d: Dest) = nav.navigate(d.route) {
         popUpTo(nav.graph.findStartDestination().id) { saveState = true }

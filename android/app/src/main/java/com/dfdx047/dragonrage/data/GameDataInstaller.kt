@@ -65,6 +65,7 @@ class GameDataInstaller(
             iso.use {
                 report(InstallState.Working(context.getString(R.string.step_checking), 0f, context.getString(R.string.detail_finding)))
                 val original = verify(iso, report)
+                if (!original) compatible(iso)
                 extract(iso, report, modified = !original)
             }
         }
@@ -109,6 +110,27 @@ class GameDataInstaller(
         return !checkSums || (sha1(rom) == ROM_SHA1 && sha1(menu) == DBZP_SHA1)
     }
 
+    /**
+     * A modified image (a translation, a mod) is only usable if the engine finds its data tables where the original has
+     * them: the engine copies them from SLUS_216.78 and BIN/DBZP.BIN by the offsets in its list (libbt3.so.dat, an
+     * asset). A menu program shorter than the list needs stopped the game at its start ("damaged file"): such an
+     * image is turned away here, with the reason.
+     */
+    private fun compatible(iso: IsoImage) {
+        val dbzp = iso.find("BIN/DBZP.BIN") ?: return
+        val list = runCatching { context.assets.open("libbt3.so.dat").use { it.readBytes() } }.getOrNull() ?: return
+        if (list.size < 16 || String(list, 0, 4, Charsets.US_ASCII) != "BT3D") return
+        val b = ByteBuffer.wrap(list).order(ByteOrder.LITTLE_ENDIAN)
+        val count = b.getInt(4)
+        var need = 0L
+        for (i in 0 until count) {
+            val at = 16 + i * 16
+            if (at + 16 > list.size) break
+            if (b.getInt(at + 4) == 1) need = maxOf(need, (b.getInt(at + 8).toLong() and 0xFFFFFFFFL) + (b.getInt(at + 12).toLong() and 0xFFFFFFFFL))
+        }
+        if (dbzp.size < need) throw Stop(context.getString(R.string.err_mod_incompatible))
+    }
+
     private suspend fun extract(iso: IsoImage, report: (InstallState.Working) -> Unit, modified: Boolean): InstallState.Installed {
         val take = iso.files.filter {
             val u = it.path.uppercase()
@@ -146,6 +168,9 @@ class GameDataInstaller(
             val out = File(paths.gameData, "disc/$u") // upper case, as the game asks for them
             out.parentFile?.mkdirs()
             copyOut(iso, f.offset, f.size, out, buf) { progress(it) }
+            // (a copy that came out short: a storage that said yes and then wrote less, or an image read through a
+            // provider that ended early. The game stopped at its start with such files.)
+            if (out.length() != f.size) throw Stop(context.getString(R.string.err_copy_short, f.path))
             files++
         }
         val bytes = paths.gameData.sizeDeep()

@@ -91,6 +91,7 @@ typedef struct GsDraw {
 #define GS_TEXFMT_BC1 1
 #define GS_TEXFMT_BC2 2
 #define GS_TEXFMT_BC3 3
+#define GS_TEXFMT_ASTC4 4 /* ASTC 4x4 (Android: gs_astc.cpp's copies of a pack's replacements) */
 
 /* The frame being recorded. A back end's frameEnd reads these, uploads the vertices, replays the list and
    clears the counters for the next frame. */

@@ -157,6 +157,15 @@ def cxx_source(f):
     return (o if r.returncode == 0 else None), f.name, r.stderr
 
 
+def astc_source(f):
+    """ARM's astc-encoder (port/third_party/astcenc): the texture packs' ASTC copies (gs_astc.cpp), with NEON."""
+    o = OBJ / ("cxx_astcenc_" + f.stem + ".o")
+    r = run([str(LLVM / "bin/clang++")] + TARGET + ["-std=c++17", "-c", "-O2", "-g0", "-fPIE", "-fno-exceptions", "-fno-rtti", "-w",
+                                                   "-DASTCENC_NEON=1", "-DASTCENC_SSE=0", "-DASTCENC_AVX=0", "-DASTCENC_POPCNT=0",
+                                                   "-DASTCENC_F16C=0", "-DASTCENC_SVE=0", str(f), "-o", str(o)])
+    return (o if r.returncode == 0 else None), f.name, r.stderr
+
+
 def shaders():
     """port/src/gs/shaders as SPIR-V and as source text, in the header the renderer includes (as undefined.py)."""
     gen = GEN / "gs"
@@ -207,6 +216,7 @@ def compile_all():
     jobs += [(port_source, f) for f in [ROOT / "src/port/vu0_a.c", ROOT / "src/port/vu0_b.c"] + sorted((ROOT / "port/src").glob("*.c"))]
     jobs += [(gs_source, f) for f in sorted((ROOT / "port/src/gs").glob("*.c"))]
     jobs += [(cxx_source, f) for f in sorted((ROOT / "port/third_party/imgui").glob("*.cpp")) + sorted((ROOT / "port/src/gs").glob("*.cpp"))]
+    jobs += [(astc_source, f) for f in sorted((ROOT / "port/third_party/astcenc").glob("*.cpp"))]
     only = os.environ.get("BT3_ONLY")  # a few files: BT3_ONLY=btl_obj,plat_mem
     if only:
         names = only.split(",")

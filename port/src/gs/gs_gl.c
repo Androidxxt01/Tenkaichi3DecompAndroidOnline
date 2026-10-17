@@ -337,6 +337,9 @@ static GLuint make_present_program(void) {
 static SDL_Window *sWindow;
 static SDL_GLContext sCtx;
 static GLuint sMainProg[8]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag; 4..7: the same with gsnz.frag (key bit 23) */
+static GLuint sMainProgFetch[8]; /* the same for the draws that test the destination alpha, reading it from the frame buffer (sHasFetch) */
+static int sHasFetch;     /* EXT_shader_framebuffer_fetch: no copy of the alpha bytes for TEST.DATE (tile-based GPUs keep their pass) */
+static int sWantFetch;    /* the draw being set up tests the destination alpha */
 static GLuint sMainProgNd[8]; /* the same with the fragment shader without its discards (pipeline key bit 25, as the Vulkan back end) */
 static GLuint sOutlineProg, sKeyProg, sDclutProg, sPresentProg;
 static GLuint sVaoGs, sVaoVu, sVboGs, sVboVu, sIboVu;
@@ -419,7 +422,8 @@ static int tex_upload(GsTex handle, int level, uint32_t w, uint32_t h, int forma
         glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
     } else {
         GLenum ifmt = format == GS_TEXFMT_BC1 ? GL_COMPRESSED_RGBA_S3TC_DXT1_EXT :
-                      format == GS_TEXFMT_BC2 ? GL_COMPRESSED_RGBA_S3TC_DXT3_EXT : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+                      format == GS_TEXFMT_BC2 ? GL_COMPRESSED_RGBA_S3TC_DXT3_EXT :
+                      format == GS_TEXFMT_ASTC4 ? 0x93B0 /* GL_COMPRESSED_RGBA_ASTC_4x4_KHR */ : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
         glCompressedTexImage2D(GL_TEXTURE_2D, level, ifmt, (GLsizei)w, (GLsizei)h, 0, (GLsizei)bytes, px);
     }
     free((void *)px);
@@ -574,12 +578,13 @@ static void set_uniform_u(const Vu0Uniform *u) {
 
 static void set_pipe(int pipe) {
     Pipe *p;
-    if (pipe == sCurPipe) { return; }
-    sCurPipe = pipe;
+    if (pipe * 2 + sWantFetch == sCurPipe) { return; }
+    sCurPipe = pipe * 2 + sWantFetch;
     p = &sPipes[pipe];
     {
         int pi = p->vu + (p->nz ? 4 : 0);
-        GLuint prog = p->fx ? sDclutProg : p->nd && sMainProgNd[pi] != 0 ? sMainProgNd[pi] : sMainProg[pi];
+        GLuint prog = p->fx ? sDclutProg : sWantFetch && sMainProgFetch[pi] != 0 ? sMainProgFetch[pi] :
+                      p->nd && sMainProgNd[pi] != 0 ? sMainProgNd[pi] : sMainProg[pi];
         if (sCurProgram != prog) { sCurProgram = prog; glUseProgram(prog); }
     }
     apply_blend(p->bkey);
@@ -763,6 +768,12 @@ static int gl_init(void) {
     if (sHasClipControl) { glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); }
     if (SDL_GL_ExtensionSupported("GL_EXT_depth_clamp")) { glEnable(GL_DEPTH_CLAMP); }
     gGsNoBcTextures = !SDL_GL_ExtensionSupported("GL_EXT_texture_compression_s3tc");
+#if GL_ES
+    {   /* ASTC LDR is part of OpenGL ES 3.2 (and KHR_texture_compression_astc_ldr before it): gs_astc.cpp's copies */
+        extern int gGsAstcTextures;
+        gGsAstcTextures = 1; /* (the context is OpenGL ES 3.2, which has ASTC LDR in its core) */
+    }
+#endif
     fprintf(stderr, "bt3: gl es: clip control %s, depth clamp %s, DXT textures %s\n", sHasClipControl ? "yes" : "no",
             SDL_GL_ExtensionSupported("GL_EXT_depth_clamp") ? "yes" : "no", gGsNoBcTextures ? "no (a pack's .dds are unpacked on the CPU)" : "yes");
 #else
@@ -798,6 +809,27 @@ static int gl_init(void) {
         sMainProgNd[6] = make_program(kVu4VertGlsl, kGsnzFragGlsl, "vu4 nz-nd", sGsSamplers, 2, 1);
         sMainProgNd[7] = make_program(kVu6VertGlsl, kGsnzFragGlsl, "vu6 nz-nd", sGsSamplers, 2, 1);
     }
+#if GL_ES
+    /* The destination alpha test (TEST.DATE: the HUD's bars, some of a stage's layers) read a copy of the alpha bytes,
+       taken before each run of such draws: on a tile-based GPU (Mali) every copy ends the tiles' pass and starts
+       another, and a fight with many of them ran at a fraction of its speed (50 passes a picture on a Mali-G52). With
+       EXT_shader_framebuffer_fetch the shader reads the bytes where they are: no copy, no break. BT3_GL_NOFETCH=1: the
+       copies, as before. */
+    if (getenv("BT3_GL_NOFETCH") == NULL && SDL_GL_ExtensionSupported("GL_EXT_shader_framebuffer_fetch") && !sGlFailed) {
+        static const unsigned char *const vs[4] = {kGsVertGlsl, kVu0VertGlsl, kVu4VertGlsl, kVu6VertGlsl};
+        int k;
+        sHasFetch = 1;
+        for (k = 0; k < 8 && sHasFetch; k++) {
+            sMainProgFetch[k] = make_program(vs[k & 3], k < 4 ? kGsFragGlsl : kGsnzFragGlsl, "fetch", sGsSamplers, 2, 2);
+            sHasFetch = sMainProgFetch[k] != 0 && !sGlFailed;
+        }
+        if (!sHasFetch) {
+            sGlFailed = 0; /* (only these could not be made: the copies are used) */
+            memset(sMainProgFetch, 0, sizeof(sMainProgFetch));
+        }
+    }
+    fprintf(stderr, "bt3: gl: destination alpha %s\n", sHasFetch ? "read from the frame buffer (framebuffer fetch)" : "from copies");
+#endif
     sPresentProg = make_present_program();
     if (sGlFailed) {
         fprintf(stderr, "bt3: gl: the shaders could not be made: this renderer gives up\n");
@@ -1127,7 +1159,7 @@ static void frame_end(void) {
             int rx = 0, ry = 0, rw = GS_W * SCALE, rh = GS_H * SCALE;
             if (!gsTargets[d->target].cleared) { continue; }
             /* the DATE copy: only what the draws that follow read (gs_draw.c); rows as in the Vulkan back end */
-            if (d->native == 5 && !GsDraw_DateRegion(n, &rx, &ry, &rw, &rh)) { continue; }
+            if (d->native == 5 && (sHasFetch || !GsDraw_DateRegion(n, &rx, &ry, &rw, &rh))) { continue; } /* (fetch: no copy) */
             /* The copy of the frame's alpha ids (the outline and the DATE passes read it). glBlitFramebuffer is
                clipped by the scissor test, so with a partial scissor in force (the split screen's halves) only
                part of the alpha would be copied and the outline would draw a stale silhouette; turn it off for
@@ -1151,6 +1183,7 @@ static void frame_end(void) {
             float params[4] = {(float)d->src, d->misc[0], 0.0f, 0.0f};
             if (!gsTargets[d->target].cleared) { continue; }
             if (cur != d->target) { bind_target(d->target, 0); cur = d->target; }
+            sWantFetch = 0;
             set_pipe(d->pipeline);
             set_textures(sTgDep[d->target], 6, sAuxCopy, 6, (GLuint)d->tex, 6);
             set_params(params, 16);
@@ -1199,6 +1232,7 @@ static void frame_end(void) {
             glEnable(GL_SCISSOR_TEST);
             haveScissor = 0;
         }
+        sWantFetch = sHasFetch && d->misc[1] != 0.0f; /* (a draw that tests the destination alpha) */
         set_pipe(d->pipeline);
         glBindVertexArray(d->vu ? sVaoVu : sVaoGs);
         if (d->vu) { set_uniform_u(&gsVuUni[d->uniform]); }

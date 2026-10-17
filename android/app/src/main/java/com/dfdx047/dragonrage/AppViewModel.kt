@@ -33,6 +33,9 @@ import com.dfdx047.dragonrage.data.DriverRelease
 import com.dfdx047.dragonrage.data.DriverSource
 import com.dfdx047.dragonrage.data.DriverSources
 import com.dfdx047.dragonrage.data.PerfReport
+import com.dfdx047.dragonrage.data.LastRun
+import com.dfdx047.dragonrage.data.OnlineState
+import com.dfdx047.dragonrage.data.OnlineStatus
 import com.dfdx047.dragonrage.data.LogExport
 import com.dfdx047.dragonrage.data.ImportResult
 import com.dfdx047.dragonrage.data.InstallState
@@ -193,6 +196,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _perf = MutableStateFlow<PerfReport?>(null)
     val perf: StateFlow<PerfReport?> = _perf.asStateFlow()
 
+    private val _online = MutableStateFlow<OnlineState>(OnlineState.Checking)
+    /** How online play stands for this build (the matchmaking service's answer), for the banner on Home. */
+    val online: StateFlow<OnlineState> = _online.asStateFlow()
+
+    fun checkOnline() {
+        _online.value = OnlineState.Checking
+        viewModelScope.launch { _online.value = runCatching { OnlineStatus.check(paths, BuildConfig.PORT_RELEASE) }.getOrDefault(OnlineState.Unreachable) }
+    }
+
+    private val _lastRun = MutableStateFlow<LastRun.Report?>(null)
+    /** Why the game's last run stopped, when its log says it did not end well (shown once, as a dialog). */
+    val lastRun: StateFlow<LastRun.Report?> = _lastRun.asStateFlow()
+
+    fun checkLastRun() = viewModelScope.launch(Dispatchers.IO) {
+        runCatching { LastRun.check(paths) }.getOrNull()?.let { _lastRun.value = it }
+    }
+
+    fun dismissLastRun() {
+        _lastRun.value = null
+    }
+
     fun refreshPerf() = viewModelScope.launch(Dispatchers.IO) { _perf.value = runCatching { PerfReport.read(paths) }.getOrNull() }
 
     // ---- drivers from their authors' GitHub releases (Drivers page)
@@ -244,6 +268,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (p != null && settings.get(EngineSettings.GPU_TIER, -1) == -1) _gpuOffer.value = p
             _perf.value = runCatching { PerfReport.read(paths) }.getOrNull()
         }
+        checkOnline()
     }
 
     fun setRenderer(choice: Int) = viewModelScope.launch(Dispatchers.IO) {

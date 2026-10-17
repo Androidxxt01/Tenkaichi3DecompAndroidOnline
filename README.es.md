@@ -23,11 +23,13 @@
 ---
 
 > [!IMPORTANT]
-> **Estado (0.6.0): el juego completo corre de forma nativa en Android arm64**: menús, modo historia y peleas completas a
+> **Estado (0.7.0): el juego completo corre de forma nativa en Android arm64**: menús, modo historia y peleas completas a
 > los 30 fps del juego, en Snapdragon y en GPUs Mali, Xclipse y PowerVR. El launcher ahora **detecta tu GPU** y te ofrece
 > ajustes pensados para mantener las peleas a 30 fps estables; ya están incluidos el juego online (PC y Android en las
 > mismas salas), los packs de texturas HD, un nuevo menú dentro del juego hecho para pantallas táctiles, el nuevo control
-> en pantalla **Dragón** y la **descarga de drivers** para Adreno. En inglés, portugués y español. Mira la
+> en pantalla **Dragón** y la **descarga de drivers** para Adreno. La 0.7.0 trae la versión 0.1.36 del port de PC (el
+> online vuelve a funcionar), un **aviso del estado del online** en el launcher, la página **Dragon Net Battle** hecha
+> para pantallas táctiles, packs de texturas en ASTC y peleas más rápidas en Mali. En inglés, portugués y español. Mira la
 > [Hoja de ruta](#hoja-de-ruta).
 
 Este repositorio **no contiene ningún dato del juego**. Necesitas tu propia copia de la **versión de EE. UU. (SLUS-21678)**
@@ -128,6 +130,10 @@ opcional `match_url.txt` (una línea, `https://...`) indica otro servicio de mat
       en el modo historia), un nuevo menú dentro del juego para pantallas táctiles, niveles de GPU con ajustes
       recomendados, descarga de drivers, página de Depuración, orientación, español, el control Dragón, la distribución
       automática del modo historia corregida
+- [x] **0.7.0**: la 0.1.36 del port de PC (online aceptado de nuevo), aviso del estado del online en el launcher,
+      página Dragon Net Battle táctil, packs de texturas guardados en ASTC, framebuffer fetch en OpenGL ES en Mali (sin
+      copias para el alfa de destino), comprobación de ISOs modificadas o incompletas y un aviso que explica por qué se
+      cerró el juego
 
 ### Lo que viene
 - [ ] Nuestro propio servicio de matchmaking (el del port para PC tiene límites diarios y códigos para versiones firmadas)

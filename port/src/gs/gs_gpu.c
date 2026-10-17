@@ -149,20 +149,24 @@ static GsTex target_depth(int i) { return (GsTex)(uintptr_t)sTgDep[i]; }
 /* --- textures ------------------------------------------------------------------- */
 
 /* The format a texture pack's replacement can be in (gs_draw.h's GS_TEXFMT_*), as SDL GPU wants it. */
-static const SDL_GPUTextureFormat kTexFormat[4] = {SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM,
-                                                   SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM, SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM};
+static const SDL_GPUTextureFormat kTexFormat[5] = {SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM,
+                                                   SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM, SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM,
+                                                   SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM};
 
 /* Makes a texture object; the levels' pixels come with tex_upload (the copy pass uploads them). 0 = unsupported. */
 static GsTex tex_create(uint32_t w, uint32_t h, int format, int levels) {
     SDL_GPUTextureCreateInfo ci;
     SDL_GPUTexture *tex;
 
-    if (!SDL_GPUTextureSupportsFormat(sDev, kTexFormat[format & 3], SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER)) {
+    if (format < 0 || format > 4) {
+        format = 0;
+    }
+    if (!SDL_GPUTextureSupportsFormat(sDev, kTexFormat[format], SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER)) {
         return 0;
     }
     SDL_zero(ci);
     ci.type = SDL_GPU_TEXTURETYPE_2D;
-    ci.format = kTexFormat[format & 3];
+    ci.format = kTexFormat[format];
     ci.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
     ci.width = w;
     ci.height = h;
@@ -696,6 +700,11 @@ static int vk_init(void) {
         if (gGsNoBcTextures) {
             fprintf(stderr, "bt3: the GPU has no DXT textures: a texture pack's .dds files are unpacked on the CPU\n");
         }
+    }
+    {   /* ASTC 4x4: a texture pack's replacements are kept as ASTC copies where the GPU reads it (gs_astc.cpp) */
+        extern int gGsAstcTextures, gGsAstcOn; /* gs_draw.c */
+        gGsAstcTextures = SDL_GPUTextureSupportsFormat(sDev, kTexFormat[4], SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        fprintf(stderr, "bt3: ASTC textures: %s%s\n", gGsAstcTextures ? "yes" : "no", gGsAstcTextures && !gGsAstcOn ? " (switched off)" : "");
     }
     pipelines_preload();
     return 1;

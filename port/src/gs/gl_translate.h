@@ -10,7 +10,9 @@
    (vertex inputs and fragment outputs).
    es: GLSL ES 3.20 instead (OpenGL ES 3.2, Android): default precisions, std140 uniform blocks (the C side writes
    them with that layout), gl_PointSize written (ES has no default point size).
-   nodiscard: GS_NO_DISCARD defined (gs.frag without its discards, as the Vulkan back end's second shader).
+   nodiscard: bit 0, GS_NO_DISCARD defined (gs.frag without its discards, as the Vulkan back end's second shader); bit 1,
+   the destination alpha read from the frame buffer itself (EXT_shader_framebuffer_fetch: outAux becomes inout) instead
+   of from a copy, so that the draws that test it need no copy and no break of the tiles' pass.
    clip_control: the context has glClipControl(GL_ZERO_TO_ONE), so z need not be moved to OpenGL's range. */
 static char *gl_translate(const char *src, int is_vertex, int es, int nodiscard, int clip_control) {
     size_t cap = strlen(src) + 512, len = 0;
@@ -21,8 +23,10 @@ static char *gl_translate(const char *src, int is_vertex, int es, int nodiscard,
     const char *p = src;
     while (*p) {
         if (!strncmp(p, "#version 450", 12)) {
-            PUSH(es ? "#version 320 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;" : "#version 330 core");
-            if (nodiscard) { PUSH("\n#define GS_NO_DISCARD 1"); }
+            PUSH(es ? "#version 320 es" : "#version 330 core");
+            if (nodiscard & 2) { PUSH("\n#extension GL_EXT_shader_framebuffer_fetch : require"); }
+            if (es) { PUSH("\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;"); }
+            if (nodiscard & 1) { PUSH("\n#define GS_NO_DISCARD 1"); }
             p += 12;
             continue;
         }
@@ -56,6 +60,22 @@ static char *gl_translate(const char *src, int is_vertex, int es, int nodiscard,
         out[len++] = *p++;
     }
     out[len] = 0;
+    if (!is_vertex && (nodiscard & 2)) { /* framebuffer fetch: the alpha bytes are read where they are */
+        static const char *const from[2] = {"layout(location = 1) out vec4 outAux;", "texelFetch(dateTex, ivec2(gl_FragCoord.xy), 0).r"};
+        static const char *const to[2] = {"layout(location = 1) inout highp vec4 outAux;", "outAux.r"};
+        int k;
+        for (k = 0; k < 2; k++) {
+            char *at = strstr(out, from[k]);
+            if (at != NULL) {
+                size_t fl = strlen(from[k]), tl = strlen(to[k]), rest = strlen(at + fl) + 1, off = (size_t)(at - out);
+                while (len - fl + tl + 1 > cap) { cap *= 2; out = (char *)realloc(out, cap); }
+                at = out + off;
+                memmove(at + tl, at + fl, rest);
+                memcpy(at, to[k], tl);
+                len = len - fl + tl;
+            }
+        }
+    }
     /* SDL GPU (Vulkan) maps clip-space +Y to the TOP of the render target; OpenGL maps it to the BOTTOM, so
        the same shader would store the picture in the other half of the target (black window). Flipping
        gl_Position.y makes OpenGL store the picture exactly where the Vulkan back end does, so the present,
