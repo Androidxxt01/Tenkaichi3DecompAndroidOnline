@@ -23,7 +23,7 @@ sealed interface OnlineState {
 
 object OnlineStatus {
     private const val NET_VERSION = 4 // the online protocol's version (port/src/gs/net.c NET_VERSION)
-    const val DEFAULT_URL = "https://odd-surf-0af7.bt3decomp.workers.dev"
+    const val DEFAULT_URL = "https://mitigo-rooms.minetivacraft.workers.dev"
 
     private fun post(url: String, body: String): Pair<Int, String> {
         val c = (URL(url).openConnection() as HttpURLConnection).apply {
