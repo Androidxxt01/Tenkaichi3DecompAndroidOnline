@@ -166,6 +166,12 @@ fun SettingsScreen(vm: AppViewModel) {
                 stringResource(R.string.renderer_now, gpu.ifEmpty { "?" }, picks),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (choice == Renderer.OPENGL && Renderer.isMali(gpu)) {
+                Text(
+                    stringResource(R.string.renderer_mali_gl),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+                )
+            }
             Text(
                 stringResource(R.string.renderer_text),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -337,6 +337,7 @@ static GLuint make_present_program(void) {
 static SDL_Window *sWindow;
 static SDL_GLContext sCtx;
 static GLuint sMainProg[8]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag; 4..7: the same with gsnz.frag (key bit 23) */
+extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 static GLuint sMainProgFetch[8]; /* the same for the draws that test the destination alpha, reading it from the frame buffer (sHasFetch) */
 static int sHasFetch;     /* EXT_shader_framebuffer_fetch: no copy of the alpha bytes for TEST.DATE (tile-based GPUs keep their pass) */
 static int sWantFetch;    /* the draw being set up tests the destination alpha */
@@ -813,9 +814,13 @@ static int gl_init(void) {
     /* The destination alpha test (TEST.DATE: the HUD's bars, some of a stage's layers) read a copy of the alpha bytes,
        taken before each run of such draws: on a tile-based GPU (Mali) every copy ends the tiles' pass and starts
        another, and a fight with many of them ran at a fraction of its speed (50 passes a picture on a Mali-G52). With
-       EXT_shader_framebuffer_fetch the shader reads the bytes where they are: no copy, no break. BT3_GL_NOFETCH=1: the
-       copies, as before. */
-    if (getenv("BT3_GL_NOFETCH") == NULL && SDL_GL_ExtensionSupported("GL_EXT_shader_framebuffer_fetch") && !sGlFailed) {
+       EXT_shader_framebuffer_fetch the shader reads the bytes where they are: no copy, no break.
+       OFF unless asked for (setting "gl_fetch" = 1, or BT3_GL_FETCH=1; BT3_GL_NOFETCH=1 always off): on two Mali-G52
+       (drivers r32p1 and r49p1, 0.7.0) it drew black blocks over the picture and then hung the GPU (no picture came
+       back from the driver after 6 to 30 seconds). The copies are what 0.6.0 did. */
+    if (getenv("BT3_GL_NOFETCH") == NULL &&
+        (getenv("BT3_GL_FETCH") != NULL ? atoi(getenv("BT3_GL_FETCH")) != 0 : Port_Setting("gl_fetch", 0) != 0) &&
+        SDL_GL_ExtensionSupported("GL_EXT_shader_framebuffer_fetch") && !sGlFailed) {
         static const unsigned char *const vs[4] = {kGsVertGlsl, kVu0VertGlsl, kVu4VertGlsl, kVu6VertGlsl};
         int k;
         sHasFetch = 1;

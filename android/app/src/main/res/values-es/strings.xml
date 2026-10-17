@@ -363,4 +363,5 @@
     <string name="err_copy_short">%1$s no se copió por completo (almacenamiento lleno o no se pudo leer el archivo). Libera espacio e importa de nuevo.</string>
     <string name="astc">Packs de texturas en ASTC</string>
     <string name="astc_text">Guarda una copia comprimida de las imágenes de los packs de texturas en el formato que leen las GPU de móvil (Mali, Adreno…), hecha en segundo plano la primera vez que se usa cada una: un cuarto de la memoria y peleas más fluidas con packs HD.</string>
+    <string name="renderer_mali_gl">En las GPU Mali, OpenGL ES es varias veces más lento en las peleas que Vulkan (en una Mali-G52: unos 4 cuadros por segundo contra 12 a 26, con el juego a velocidad completa). Usa Automático, salvo que Vulkan no arranque en este móvil.</string>
 </resources>

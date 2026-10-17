@@ -23,12 +23,12 @@
 ---
 
 > [!IMPORTANT]
-> **Status (0.7.0): the whole game runs natively on Android arm64**: menus, story mode and full battles at the game's
+> **Status (0.7.1): the whole game runs natively on Android arm64**: menus, story mode and full battles at the game's
 > 30 fps on Snapdragon and on Mali, Xclipse and PowerVR GPUs. The launcher now **detects your GPU** and offers settings
 > made to keep fights at a steady 30 fps; online play (PC and Android in the same rooms), HD texture packs, a new
 > in-game menu made for touch, the new **Dragon** on-screen controller and **driver downloads** for Adreno are in.
 > 0.7.0 brings the PC port's release 0.1.36 (online works again), an **online status banner** in the launcher, a
-> touch-made **Dragon Net Battle** page, ASTC texture packs and faster Mali fights. English, Portuguese and Spanish.
+> touch-made **Dragon Net Battle** page, ASTC texture packs. English, Portuguese and Spanish.
 > See [Roadmap](#roadmap).
 
 This repository contains **no game data**. You need your own copy of the **USA release (SLUS-21678)** as an
@@ -128,8 +128,9 @@ were offered), `perf_log`, `frag_depth`. The on-screen controller is in `touch_c
       GPU tiers with recommended settings, driver downloads, Debug page, orientation, Spanish, the Dragon controller,
       the story mode's automatic layout fixed
 - [x] **0.7.0**: the PC port's 0.1.36 (online accepted again), online status banner in the launcher, Dragon Net
-      Battle page for touch, texture packs kept as ASTC, OpenGL ES framebuffer fetch on Mali (no copies for
-      destination alpha), checks for modified or incomplete ISO imports and a dialog explaining why the game closed
+      Battle page for touch, texture packs kept as ASTC, checks for modified or incomplete ISO imports and a dialog explaining why the game closed
+- [x] **0.7.1**: framebuffer fetch off again (black blocks and a frozen GPU on Mali-G52 with OpenGL ES), a warning
+      when OpenGL ES is chosen on a Mali
 
 ### Next
 - [ ] Our own matchmaking service (the PC port's has daily limits and codes for signed releases)
